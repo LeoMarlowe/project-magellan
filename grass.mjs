@@ -126,5 +126,8 @@ export function createGrass(center, quality = { density: 1, range: 78, fade: 38 
   // wind: direction and strength on the ground plane (1 is a breeze); speed
   // in m/s thins the grass right by the camera from about 80 to 180 km/h.
   function animate(seconds, x, y, z, windX = .8, windZ = .6, speed = 0) { time.value = seconds; car.value.set(x, y, z); wind.value.set(windX, windZ); rush.value = smoothstep(22, 50, speed); }
-  return { build, update, animate, setQuality, get range() { return range; }, get fadeStart() { return fadeUniform.value; }, get density() { return density; }, get trianglesPerTuft() { return simple ? 5 : 15; } };
+  // An empty mesh with the grass material, so its shader can be built during
+  // loading even where no grass is in view yet (out at sea, in the desert).
+  const warmup = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  return { build, update, animate, setQuality, warmup, get range() { return range; }, get fadeStart() { return fadeUniform.value; }, get density() { return density; }, get trianglesPerTuft() { return simple ? 5 : 15; } };
 }

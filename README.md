@@ -135,16 +135,18 @@ The start and pause menus have these settings:
 | --- | --- | --- | --- |
 | Low | 1× | 512 near, no far map | 10%, cheap tufts, within 36 m |
 | Medium | 1.35× | 1024 near and far | 20%, cheap tufts, within 48 m |
-| High | 1.7× (up to 2× on phones) | 2048 near and far | Full, within 78 m |
+| High | 1.5× (up to 2× on phones) | 2048 near, 1024 far | Full, within 78 m |
 | Auto (default) | Starts at Medium on phones and High on desktops, and adjusts to keep the frame rate up | | |
 
-Auto steps down after about 2 seconds of frames slower than 48 fps, and back up (through an in-between Medium+ level) after 6 seconds of smooth driving. It ignores one-off hitches and pauses, doesn't retry a level that has failed twice, and remembers where it settled. `?quality=low|medium|high|auto` overrides the setting.
+Auto steps down after about 2 seconds of frames slower than 48 fps, or when more than 3% of the last 10 seconds of frames stuttered (took over one and a half display refreshes), which an average near 60 fps hides; stutters alone never take it below Medium. It steps back up (through an in-between Medium+ level) after 6 seconds of smooth driving. It ignores one-off hitches and pauses, doesn't retry a level that has failed twice, and remembers where it settled. `?quality=low|medium|high|auto` overrides the setting.
 
 **FPS meter** shows a debug overlay under the logo with:
 
 - frames per second;
 - average, 95th-percentile and worst frame time over the last second;
 - CPU time per frame;
+- GPU time per frame, average and peak, where the browser can measure it (Chrome and Edge, not Safari). Apple GPUs slow their clock when lightly loaded, so a steady 10 ms is not a full GPU; peaks over 16.7 ms are what cost frames;
+- slow frames in the last 10 seconds: each took over one and a half display refreshes, a visible stutter;
 - draw calls and triangles;
 - the current graphics level and resolution.
 

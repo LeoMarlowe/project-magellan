@@ -3,7 +3,7 @@ import { createWater } from './water.mjs?v=day-2';
 import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-16';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
-import { createDebris } from './debris.mjs?v=physics-16';
+import { createDebris } from './debris.mjs?v=perf-1';
 import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-16';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
@@ -11,9 +11,9 @@ import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=sound-2';
 import { createVehicleAudio } from './vehicle-audio.mjs?v=weather-2';
 import { installSunShadowFade } from './shadow-fade.mjs?v=shadow-1';
-import { createGrass } from './grass.mjs?v=grass-6';
-import { createPerfMeter } from './perf-meter.mjs?v=perf-1';
-import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=grass-6';
+import { createGrass } from './grass.mjs?v=grass-7';
+import { createPerfMeter, createGpuTimer } from './perf-meter.mjs?v=perf-2';
+import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=perf-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
 import { toggleFlight, flightAxes, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-16';
 import { createClouds } from './clouds.mjs?v=clouds-3';
@@ -123,6 +123,8 @@ renderer.toneMappingExposure = 1.05;
 renderer.domElement.tabIndex = 0;
 renderer.domElement.setAttribute('aria-label', 'Driving world. WASD to drive, Space to jump, Shift to drift, R to recover, Escape to pause.');
 $('game').append(renderer.domElement);
+// The FPS meter's GPU time, where the browser can measure it.
+const gpuTimer = createGpuTimer(renderer.getContext());
 const scene = new THREE.Scene();
 // Water fades with the same (altitude-dependent) fog distances as terrain.
 const fogUniforms = { uFogNear: { value: 350 }, uFogFar: { value: 1450 } }, streamCenterUniform = { value: new THREE.Vector2() };
@@ -287,30 +289,38 @@ terrainMaterial.onBeforeCompile = shader => {
     float smoothGrain(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(grain(i),grain(i+vec2(1,0)),f.x),mix(grain(i+vec2(0,1)),grain(i+vec2(1,1)),f.x),f.y);}
   ` + shader.fragmentShader;
   shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
-    vec2 p=vGroundXZ; float dx=10000.0;float dz=10000.0;
-    for(int k=-1;k<=1;k++){
-      dx=min(dx,abs(p.x-centerAt(p.y,floor(p.x/420.0+.5)+float(k),0.0)));
-      dz=min(dz,abs(p.y-centerAt(p.x,floor(p.y/420.0+.5)+float(k),1.0)));
+    // Each band's road strays at most 94 m from its line (35 + 12 m swings,
+    // twice), and the lines are 420 m apart: within 116 m of a road, it is
+    // always the nearest band's. So one band per axis gives the same road as
+    // searching three, and everything past 116 m is far off any road anyway.
+    vec2 p=vGroundXZ;
+    float dx=abs(p.x-centerAt(p.y,floor(p.x/420.0+.5),0.0));
+    float dz=abs(p.y-centerAt(p.x,floor(p.y/420.0+.5),1.0));
+    float d=min(dx,dz);float aa=max(fwidth(d),.04); // derivatives outside the branch
+    float shoulder=0.0;
+    // Away from roads (most of the ground) the asphalt work is skipped.
+    if(d<6.6+aa){
+      shoulder=1.0-smoothstep(5.0,6.6,d);
+      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.34,.31,.235),shoulder*.68);
+      float asphalt=1.0-smoothstep(4.65-aa,4.65+aa,d);
+      float speckle=grain(floor(p*9.0));
+      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.105,.124,.12)+speckle*.018,asphalt);
+      float edge=(1.0-smoothstep(.065,.065+aa,abs(d-4.13)))*step(5.0,max(dx,dz));
+      float along=dx<dz?p.y:p.x;
+      float dash=(1.0-smoothstep(.065,.065+aa,d))*step(7.0,mod(along,14.0))*smoothstep(6.0,8.0,max(dx,dz));
+      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.77,.72,.56),max(edge*.7,dash*.88));
     }
-    float d=min(dx,dz);float aa=max(fwidth(d),.04);
-    float shoulder=1.0-smoothstep(5.0,6.6,d);
-    diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.34,.31,.235),shoulder*.68);
-    float asphalt=1.0-smoothstep(4.65-aa,4.65+aa,d);
-    float speckle=grain(floor(p*9.0));
-    diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.105,.124,.12)+speckle*.018,asphalt);
-    float edge=(1.0-smoothstep(.065,.065+aa,abs(d-4.13)))*step(5.0,max(dx,dz));
-    float along=dx<dz?p.y:p.x;
-    float dash=(1.0-smoothstep(.065,.065+aa,d))*step(7.0,mod(along,14.0))*smoothstep(6.0,8.0,max(dx,dz));
-    diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.77,.72,.56),max(edge*.7,dash*.88));
     // Meadow ground (green, off the road): fine grass speckle that fades out
     // before it could shimmer, and broad lush and dry blotches at any range,
     // so the land past the grass tufts doesn't read as a flat carpet.
     float meadow=smoothstep(.015,.07,diffuseColor.g-max(diffuseColor.r,diffuseColor.b)*.9)*(1.0-shoulder);
     if(meadow>0.0){
       float seen=distance(cameraPosition,vGroundWorld);
-      float fine=smoothGrain(p*1.8)*.6+smoothGrain(p*4.1+7.0)*.4;
+      // The fine speckle has faded out by 140 m: only work it out closer.
+      float close=1.0-smoothstep(35.0,140.0,seen);
+      float fine=close>0.0?smoothGrain(p*1.8)*.6+smoothGrain(p*4.1+7.0)*.4:.5;
       float blotch=smoothGrain(p*.055)*.65+smoothGrain(p*.13+3.0)*.35;
-      diffuseColor.rgb*=1.0+meadow*((fine-.5)*.2*(1.0-smoothstep(35.0,140.0,seen))+(blotch-.5)*.16);
+      diffuseColor.rgb*=1.0+meadow*((fine-.5)*.2*close+(blotch-.5)*.16);
       diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(1.1,1.05,.82),meadow*smoothstep(.58,.8,blotch)*.55);
     }
     // Sunlight focused by the waves dances over the bed of the lake nearest
@@ -766,12 +776,21 @@ function processStreaming() {
     if (worldReady() && carReady) {
       loading = false; $('startBtn').disabled = false; $('startBtn').firstElementChild.textContent = started ? 'Keep exploring' : 'Start exploring';
       resetTiming(); resetCamera(); updateHUD(); drawMap();
+      precompileShaders();
       profiler.record('worldLoad', performance.now() - loadingStarted);
       document.dispatchEvent(new Event('worldready'));
       if (resumeAfterLoad) resume();
       resumeAfterLoad = false;
     }
   }
+}
+// Build every shader while the loading screen is up, including objects not
+// drawn yet (debris before the first crash, the car's ground shadow when you
+// start in the air, grass when none is in view): three.js otherwise builds a
+// shader the first time it is drawn, stalling that frame for 10–50 ms.
+function precompileShaders() {
+  renderer.compile(scene, camera);
+  renderer.compile(grass.warmup, camera, scene);
 }
 function beginWorldLoad(continueDriving = false) {
   if (running) pause();
@@ -1331,7 +1350,10 @@ function render(dt) {
   const splashes = waterSystem.drainSplashes();
   if (audio && running && !muted) profiler.measure('audio', () => updateSound(throttle, splashes, dt));
   const renderStarted = performance.now();
+  const timed = perfMeter.visible && gpuTimer;
+  if (timed) gpuTimer.begin();
   renderer.render(scene, camera);
+  if (timed) gpuTimer.end();
   profiler.record('renderCPU', performance.now() - renderStarted, testMode ? { time: pose.time, transform: pose.transform, wakes: waterSystem.wakeCount } : undefined);
 }
 function frame(now) {
@@ -1383,7 +1405,7 @@ function frame(now) {
   render(running ? dt : 0);
   const frameCPU = performance.now() - frameStarted;
   if (running) profiler.record('frameCPU', frameCPU);
-  if (perfMeter.visible) perfMeter.frame(frameCPU, now, { draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, level: qualityNames[levels[qualityLevel].name] ?? 'Medium+', pixelRatio: renderer.getPixelRatio(), paused: !running });
+  if (perfMeter.visible) perfMeter.frame(frameCPU, now, { draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, level: qualityNames[levels[qualityLevel].name] ?? 'Medium+', pixelRatio: renderer.getPixelRatio(), paused: !running }, gpuTimer ? gpuTimer.drain() : null);
 }
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);

@@ -7,6 +7,9 @@ export function createDebris(scene, capacity = 192) {
   const material = new THREE.MeshStandardMaterial({ roughness: .95 });
   const mesh = new THREE.InstancedMesh(geometry, material, capacity);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); mesh.frustumCulled = false;
+  // Give it instance colours from the start: adding them on the first burst
+  // would rebuild its shader mid-drive (a visible hitch on the first crash).
+  mesh.setColorAt(0, new THREE.Color('#ffffff'));
   mesh.count = 0; scene.add(mesh);
   const pieces = [], dummy = new THREE.Object3D(), color = new THREE.Color();
   function burst(prop) {

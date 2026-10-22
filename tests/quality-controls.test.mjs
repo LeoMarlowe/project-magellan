@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from '../quality.mjs';
+import { qualityLevels, presetLevel, autoStartLevel, createAutoQuality, refreshInterval, isSlowFrame } from '../quality.mjs';
 import { controlAxis, steerAxis } from '../controls.mjs';
 import { createWorld, createVehicle, stepVehicle } from '../world.mjs';
 
@@ -17,7 +17,7 @@ function drive(auto, ms, seconds, from = 0) {
 test('quality presets keep the previous fixed settings as Medium (phone) and High (desktop)', () => {
   const phone = qualityLevels(true), desktop = qualityLevels(false);
   assert.deepEqual(phone[presetLevel('medium')], { name: 'medium', pixelRatio: 1.35, shadow: 1024, farShadow: 1024, grass: { density: .2, range: 48, fade: 22, blades: 'simple' } });
-  assert.deepEqual(desktop[presetLevel('high')], { name: 'high', pixelRatio: 1.7, shadow: 2048, farShadow: 2048, grass: { density: 1, range: 78, fade: 38, blades: 'full' } });
+  assert.deepEqual(desktop[presetLevel('high')], { name: 'high', pixelRatio: 1.5, shadow: 2048, farShadow: 1024, grass: { density: 1, range: 78, fade: 38, blades: 'full' } });
   assert.equal(phone[presetLevel('high')].pixelRatio, 2);
   assert.equal(autoStartLevel(true), 1); assert.equal(autoStartLevel(false), 3);
   for (const levels of [phone, desktop]) for (let i = 1; i < levels.length; i++) {
@@ -57,6 +57,27 @@ test('auto quality does not oscillate: a level that fails twice is never retried
   assert.deepEqual(phase(40, 4), [2]);        // fails again
   assert.deepEqual(phase(1000 / 60, 60), []); // stays at Medium+
   assert.equal(auto.level, 2);
+});
+
+test('auto quality steps down on frequent stutters even when the average looks fine, but never below Medium for them', () => {
+  // Every 25th frame misses a 60 Hz refresh: 4% stutters, about 58 fps on average.
+  const stuttering = createAutoQuality({ start: 3, max: 3 });
+  const levels = [];
+  for (let i = 0, now = 0; i < 4000; i++) { const ms = i % 25 === 0 ? 33.3 : 16.7; now += ms; const next = stuttering.sample(ms, now); if (next !== null) levels.push(next); }
+  assert.deepEqual(levels, [2, 1]);
+  // An occasional stutter (under 3%) is tolerated, and so is a 120 Hz screen
+  // that sometimes takes two refreshes (still well over 50 fps).
+  for (const [every, fast, slow] of [[60, 16.7, 33.3], [30, 8.3, 16.6]]) {
+    const auto = createAutoQuality({ start: 3, max: 3 });
+    for (let i = 0, now = 0; i < 4000; i++) { const ms = i % every === 0 ? slow : fast; now += ms; assert.equal(auto.sample(ms, now), null); }
+  }
+});
+
+test('stutter detection follows the display refresh rate', () => {
+  assert.ok(Math.abs(refreshInterval([16.7, 16.6, 33.4, 16.7, 16.8, 16.7, 16.6, 16.7, 16.7, 16.7]) - 16.6) < .01);
+  assert.ok(isSlowFrame(33.3, 16.7) && !isSlowFrame(18, 16.7));
+  assert.ok(!isSlowFrame(16.6, 8.3), 'a 60 fps frame on a 120 Hz screen is not a stutter');
+  assert.ok(isSlowFrame(25, 8.3));
 });
 
 test('auto quality settles at the lowest level on a device locked at 30 fps', () => {
