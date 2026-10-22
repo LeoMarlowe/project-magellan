@@ -4,6 +4,8 @@ import { CHUNK, smoothstep } from './world.mjs?v=physics-16';
 // Quality presets change density, fade and range live: the worker always
 // supplies the full shuffled set, and lower densities draw a prefix of it.
 const SIMPLE_VERTICES = 15, FULL_VERTICES = 45;
+// How much of the tufts' contrast fades at full speed (see animate).
+export const CALM = .6;
 export function createGrass(center, quality = { density: 1, range: 78, fade: 38 }) {
   const fadeUniform = { value: 0 }, rangeUniform = { value: 0 }, densityUniform = { value: 1 };
   let density = 1, range = 78;
@@ -36,10 +38,10 @@ export function createGrass(center, quality = { density: 1, range: 78, fade: 38 
   base.setAttribute('normal', new THREE.Float32BufferAttribute(positions.map((_, i) => i % 3 === 1 ? 1 : 0), 3));
   // Wind and the car: blades sway in gusts rolling across the field and are
   // pushed aside where the car passes. All in the vertex shader.
-  const time = { value: 0 }, car = { value: new THREE.Vector3(1e6, 0, 1e6) }, wind = { value: new THREE.Vector2(.8, .6) }, rush = { value: 0 };
+  const time = { value: 0 }, car = { value: new THREE.Vector3(1e6, 0, 1e6) }, wind = { value: new THREE.Vector2(.8, .6) }, rush = { value: 0 }, calm = { value: 0 };
   const material = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, side: THREE.DoubleSide });
   material.onBeforeCompile = shader => {
-    Object.assign(shader.uniforms, { uGrassCenter: center, uGrassFade: fadeUniform, uGrassRange: rangeUniform, uGrassTime: time, uGrassCar: car, uGrassWind: wind, uGrassDensity: densityUniform, uGrassRush: rush });
+    Object.assign(shader.uniforms, { uGrassCenter: center, uGrassFade: fadeUniform, uGrassRange: rangeUniform, uGrassTime: time, uGrassCar: car, uGrassWind: wind, uGrassDensity: densityUniform, uGrassRush: rush, uGrassCalm: calm });
     shader.vertexShader = `attribute vec3 grassRoot; attribute vec3 grassShape; attribute vec3 grassColor; attribute float grassRank;
       uniform vec2 uGrassCenter, uGrassWind; uniform float uGrassFade, uGrassRange, uGrassTime, uGrassDensity, uGrassRush; uniform vec3 uGrassCar;
       varying float vGrassHeight; varying float vGrassTint; varying vec3 vGrassColor;\n` + shader.vertexShader;
@@ -76,7 +78,7 @@ export function createGrass(center, quality = { density: 1, range: 78, fade: 38 
       transformed += grassRoot;
       vGrassHeight = position.y; vGrassTint = grassShape.z; vGrassColor = grassColor;
     `);
-    shader.fragmentShader = 'varying float vGrassHeight; varying float vGrassTint; varying vec3 vGrassColor;\n' + shader.fragmentShader;
+    shader.fragmentShader = 'varying float vGrassHeight; varying float vGrassTint; varying vec3 vGrassColor; uniform float uGrassCalm;\n' + shader.fragmentShader;
     // Treat thin blades as a soft canopy: both sides use an upward lighting
     // normal instead of alternating between bright faces and black slivers.
     shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize(vNormal);');
@@ -84,9 +86,12 @@ export function createGrass(center, quality = { density: 1, range: 78, fade: 38 
     // yellower at the tip, so tufts grow out of the terrain rather than sit on it.
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       vec3 grassTip = vGrassColor * vec3(1.28, 1.24, 1.02) + vec3(.03, .03, 0.0);
-      diffuseColor.rgb *= mix(vGrassColor * .62, grassTip, smoothstep(.0, 1.0, vGrassHeight)) * vGrassTint;`);
+      // At speed the tufts move further between frames than the eye can match
+      // them up, so the field seems to stutter at any frame rate. Their light
+      // and dark ease toward the ground colour, as motion blur would smear them.
+      diffuseColor.rgb *= mix(mix(vGrassColor * .62, grassTip, smoothstep(.0, 1.0, vGrassHeight)) * vGrassTint, vGrassColor, uGrassCalm);`);
   };
-  material.customProgramCacheKey = () => 'grass-v5';
+  material.customProgramCacheKey = () => 'grass-v6';
   function build(data) {
     const total = data.roots.length / 3;
     if (!total) return null;
@@ -124,10 +129,14 @@ export function createGrass(center, quality = { density: 1, range: 78, fade: 38 
   }
   // Each frame: the clock for the wind, and the car (in world space) pushing blades aside.
   // wind: direction and strength on the ground plane (1 is a breeze); speed
-  // in m/s thins the grass right by the camera from about 80 to 180 km/h.
-  function animate(seconds, x, y, z, windX = .8, windZ = .6, speed = 0) { time.value = seconds; car.value.set(x, y, z); wind.value.set(windX, windZ); rush.value = smoothstep(22, 50, speed); }
+  // in m/s thins the grass right by the camera from about 80 to 180 km/h, and
+  // softens the tufts' contrast by up to 60% from about 40 to 120 km/h.
+  function animate(seconds, x, y, z, windX = .8, windZ = .6, speed = 0) {
+    time.value = seconds; car.value.set(x, y, z); wind.value.set(windX, windZ);
+    rush.value = smoothstep(22, 50, speed); calm.value = CALM * smoothstep(11, 33, speed);
+  }
   // An empty mesh with the grass material, so its shader can be built during
   // loading even where no grass is in view yet (out at sea, in the desert).
   const warmup = new THREE.Mesh(new THREE.BufferGeometry(), material);
-  return { build, update, animate, setQuality, warmup, get range() { return range; }, get fadeStart() { return fadeUniform.value; }, get density() { return density; }, get trianglesPerTuft() { return simple ? 5 : 15; } };
+  return { build, update, animate, setQuality, warmup, get range() { return range; }, get fadeStart() { return fadeUniform.value; }, get density() { return density; }, get trianglesPerTuft() { return simple ? 5 : 15; }, get calm() { return calm.value; } };
 }

@@ -11,7 +11,7 @@ import { loadNatureLibrary } from './nature-models.mjs?v=nature-1';
 import { createBreakAudio } from './break-audio.mjs?v=sound-2';
 import { createVehicleAudio } from './vehicle-audio.mjs?v=weather-2';
 import { installSunShadowFade } from './shadow-fade.mjs?v=shadow-1';
-import { createGrass } from './grass.mjs?v=grass-7';
+import { createGrass } from './grass.mjs?v=grass-8';
 import { createPerfMeter, createGpuTimer } from './perf-meter.mjs?v=perf-2';
 import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=perf-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
@@ -202,7 +202,7 @@ const SKY = {
 };
 const weather = { clouds: .38, clock: 0, check: 0, target: { kind: 'clear', strength: 0, region: 'meadow' }, rain: 0, snow: 0, gust: new THREE.Vector3(), lastCamera: new THREE.Vector3(), cameraVelocity: new THREE.Vector3() };
 const weatherColor = new THREE.Color(), skyTop = new THREE.Color(), overcast = { top: new THREE.Color(), bottom: new THREE.Color(), cloud: new THREE.Color() };
-const keyTarget = new THREE.Vector3(), dayColor = new THREE.Color(), cloudTint = new THREE.Color(), surfaceLight = new THREE.Color(), skyPalette = { zenith: new THREE.Color(), horizon: new THREE.Color(), cloudLit: new THREE.Color(), cloudShade: new THREE.Color() };
+const dayColor = new THREE.Color(), cloudTint = new THREE.Color(), surfaceLight = new THREE.Color(), skyPalette = { zenith: new THREE.Color(), horizon: new THREE.Color(), cloudLit: new THREE.Color(), cloudShade: new THREE.Color() };
 let dayLight = daylight(clock.hours);
 function updateWeather(dt) {
   const step = running ? dt : 0;
@@ -237,11 +237,10 @@ function updateWeather(dt) {
   // The cloud banks take the sky clouds' lit colour (scaled so a clear day stays white).
   clouds.setShade(rain); clouds.setLight(dayColor.copy(skyPalette.cloudLit).multiplyScalar(1 / .91));
   // The key light (sun or moon) and the sky's fill.
-  // The shadow direction moves in steps of about 0.15°, under a shadow texel:
-  // turning the shadow map a little every frame would make every shadow edge
-  // shimmer, however steady the frame rate.
-  keyTarget.set(...light.keyDirection);
-  if (keyTarget.angleTo(sunDirection) > .0026) sunDirection.copy(keyTarget);
+  // The shadow direction follows the sun every frame. (Stepping it 0.15° at a
+  // time made every shadow jump at once every 0.6 s; with the maps snapped to
+  // their texel grid, the per-frame turn of about 0.004° barely moves an edge.)
+  sunDirection.set(...light.keyDirection);
   sun.color.setRGB(...light.keyColor); sun.intensity = light.keyIntensity * (1 - .72 * cover);
   hemisphere.color.setRGB(...light.hemiSky).lerp(overcast.top, cover * .5); hemisphere.groundColor.setRGB(...light.hemiGround);
   hemisphere.intensity = light.hemiIntensity * (1 + .12 * cover);
@@ -299,13 +298,18 @@ terrainMaterial.onBeforeCompile = shader => {
     float dx=abs(p.x-centerAt(p.y,floor(p.x/420.0+.5),0.0));
     float dz=abs(p.y-centerAt(p.x,floor(p.y/420.0+.5),1.0));
     float d=min(dx,dz);float aa=max(fwidth(d),.04); // derivatives outside the branch
+    // Ground metres per pixel. Detail finer than about two pixels can't be
+    // shown: sampled anyway, each frame lands on different grains and the
+    // ground crawls as you move. So each pattern fades to its average there.
+    vec2 fp=fwidth(p);float foot=max(fp.x,fp.y);
     float shoulder=0.0;
     // Away from roads (most of the ground) the asphalt work is skipped.
     if(d<6.6+aa){
       shoulder=1.0-smoothstep(5.0,6.6,d);
       diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.34,.31,.235),shoulder*.68);
       float asphalt=1.0-smoothstep(4.65-aa,4.65+aa,d);
-      float speckle=grain(floor(p*9.0));
+      // 11 cm grains, smoothly blended: hard-edged cells flicker at any range.
+      float speckle=mix(smoothGrain(p*9.0),.5,smoothstep(.03,.08,foot));
       diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.105,.124,.12)+speckle*.018,asphalt);
       float edge=(1.0-smoothstep(.065,.065+aa,abs(d-4.13)))*step(5.0,max(dx,dz));
       float along=dx<dz?p.y:p.x;
@@ -313,15 +317,17 @@ terrainMaterial.onBeforeCompile = shader => {
       diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.77,.72,.56),max(edge*.7,dash*.88));
     }
     // Meadow ground (green, off the road): fine grass speckle that fades out
-    // before it could shimmer, and broad lush and dry blotches at any range,
-    // so the land past the grass tufts doesn't read as a flat carpet.
+    // with distance and where pixels outgrow it, and broad lush and dry
+    // blotches as far as they can be shown, so the land past the grass tufts
+    // doesn't read as a flat carpet.
     float meadow=smoothstep(.015,.07,diffuseColor.g-max(diffuseColor.r,diffuseColor.b)*.9)*(1.0-shoulder);
     if(meadow>0.0){
       float seen=distance(cameraPosition,vGroundWorld);
       // The fine speckle has faded out by 140 m: only work it out closer.
       float close=1.0-smoothstep(35.0,140.0,seen);
-      float fine=close>0.0?smoothGrain(p*1.8)*.6+smoothGrain(p*4.1+7.0)*.4:.5;
-      float blotch=smoothGrain(p*.055)*.65+smoothGrain(p*.13+3.0)*.35;
+      // Each octave by its own size: 56 cm and 24 cm, then 18 m and 7.7 m.
+      float fine=close>0.0?.5+(smoothGrain(p*1.8)-.5)*.6*(1.0-smoothstep(.15,.4,foot))+(smoothGrain(p*4.1+7.0)-.5)*.4*(1.0-smoothstep(.07,.18,foot)):.5;
+      float blotch=.5+(smoothGrain(p*.055)-.5)*.65*(1.0-smoothstep(5.0,13.0,foot))+(smoothGrain(p*.13+3.0)-.5)*.35*(1.0-smoothstep(2.0,5.5,foot));
       diffuseColor.rgb*=1.0+meadow*((fine-.5)*.2*close+(blotch-.5)*.16);
       diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(1.1,1.05,.82),meadow*smoothstep(.58,.8,blotch)*.55);
     }

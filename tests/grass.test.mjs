@@ -4,7 +4,7 @@ import * as THREE from '../vendor/three.module.js';
 import { createWorld, CHUNK } from '../world.mjs';
 import { createTerrain } from '../terrain.mjs';
 import { buildGrass, MAX_GRASS_PER_CHUNK } from '../grass-data.mjs';
-import { createGrass } from '../grass.mjs';
+import { createGrass, CALM } from '../grass.mjs';
 import { qualityLevels } from '../quality.mjs';
 
 test('grass is seeded, bounded and follows terrain triangles while leaving roads, sand and ramps clear', () => {
@@ -93,4 +93,15 @@ test('each tuft takes the ground colour beneath it, and grass thins with distanc
     previous = mesh.geometry.instanceCount;
   }
   system.animate(12.5, 10, 2, 10, 1.4, .3); // wind and car push are plain uniforms
+});
+
+test('grass contrast softens with speed, from about 40 to 120 km/h, and returns when slowing', () => {
+  const system = createGrass({ value: new THREE.Vector2() });
+  const at = kmh => { system.animate(0, 0, 0, 0, .8, .6, kmh / 3.6); return system.calm; };
+  assert.equal(at(0), 0); assert.equal(at(35), 0);
+  assert.ok(Math.abs(at(130) - CALM) < 1e-9 && CALM === .6);
+  let previous = 0;
+  for (let kmh = 40; kmh <= 120; kmh += 5) { const calm = at(kmh); assert.ok(calm >= previous); previous = calm; }
+  assert.ok(at(80) > .2 && at(80) < .4, 'about half way at 80 km/h');
+  assert.equal(at(20), 0);
 });

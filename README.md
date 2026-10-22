@@ -136,7 +136,7 @@ The start and pause menus have these settings:
 | --- | --- | --- | --- |
 | Low | 1× | 512 near, no far map | 10%, cheap tufts, within 36 m |
 | Medium | 1.35× | 1024 near and far | 20%, cheap tufts, within 48 m |
-| High | 1.5× (up to 2× on phones) | 2048 near, 1024 far | Full, within 78 m |
+| High | 1.7× (up to 2× on phones) | 2048 near, 1024 far | Full, within 78 m |
 | Auto (default) | Starts at Medium on phones and High on desktops, and adjusts to keep the frame rate up | | |
 
 Auto steps down after about 2 seconds of frames slower than 48 fps, or when more than 3% of the last 10 seconds of frames stuttered (took over one and a half display refreshes), which an average near 60 fps hides; stutters alone never take it below Medium. It steps back up (through an in-between Medium+ level) after 6 seconds of smooth driving. It ignores one-off hitches and pauses, doesn't retry a level that has failed twice, and remembers where it settled. `?quality=low|medium|high|auto` overrides the setting.
@@ -356,7 +356,8 @@ The sun casts from two maps:
 - **Tufts.** On High, each tuft is five bent blades (15 triangles), coloured from the ground beneath it with a darker root and lighter tip. Low and Medium use a cheaper five-triangle tuft at lower density, so phones stay near their earlier cost.
 - **Motion.** In the vertex shader, blades sway in gusts that follow the weather's wind and part where the car drives through.
 - **Thinning.** Tufts thin smoothly with distance, and at high speed they shrink away right next to the camera, where they would only flicker.
-- **Beyond the grass.** Past the tufts, meadow ground gets a fine speckle and lush and dry blotches.
+- **At speed.** Above about 40 km/h the tufts move further between frames than the eye can match them up, so the field would seem to stutter at any frame rate. Their dark roots and bright tips ease toward the ground colour, reaching 60% softer by about 120 km/h, much as motion blur would smear them. Slow down and the contrast comes back.
+- **Beyond the grass.** Past the tufts, meadow ground gets a fine speckle and lush and dry blotches. Each fades to its average colour where a pixel grows too big to show it, so the ground doesn't crawl as you move.
 
 ### Sound
 

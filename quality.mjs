@@ -6,12 +6,11 @@ export const QUALITY_PRESETS = ['auto', 'low', 'medium', 'high'];
 // shadow-fade.mjs. Low and Medium grass use the cheap five-triangle tufts at a
 // lower density, keeping phones near their earlier grass cost. Phones have
 // small CSS viewports, so High may use a denser 2× buffer there and still draw
-// fewer pixels than the desktop cap on a larger window. On a desktop Retina
-// screen 1.5× (rather than 1.7×) saves about a fifth of the GPU's frame time
-// for a barely visible difference under MSAA. The far shadow map only covers
-// distant trees and rocks, softly: 1024 is plenty there, even on High.
+// fewer pixels than the 1.7× desktop cap on a larger window. The far shadow
+// map only covers distant trees and rocks, softly: 1024 is plenty there, even
+// on High.
 export function qualityLevels(coarse) {
-  const high = coarse ? 2 : 1.5;
+  const high = coarse ? 2 : 1.7;
   return [
     { name: 'low', pixelRatio: 1, shadow: 512, farShadow: 0, grass: { density: .1, range: 36, fade: 16, blades: 'simple' } },
     { name: 'medium', pixelRatio: 1.35, shadow: 1024, farShadow: 1024, grass: { density: .2, range: 48, fade: 22, blades: 'simple' } },

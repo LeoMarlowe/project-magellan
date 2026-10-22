@@ -17,7 +17,7 @@ function drive(auto, ms, seconds, from = 0) {
 test('quality presets keep the previous fixed settings as Medium (phone) and High (desktop)', () => {
   const phone = qualityLevels(true), desktop = qualityLevels(false);
   assert.deepEqual(phone[presetLevel('medium')], { name: 'medium', pixelRatio: 1.35, shadow: 1024, farShadow: 1024, grass: { density: .2, range: 48, fade: 22, blades: 'simple' } });
-  assert.deepEqual(desktop[presetLevel('high')], { name: 'high', pixelRatio: 1.5, shadow: 2048, farShadow: 1024, grass: { density: 1, range: 78, fade: 38, blades: 'full' } });
+  assert.deepEqual(desktop[presetLevel('high')], { name: 'high', pixelRatio: 1.7, shadow: 2048, farShadow: 1024, grass: { density: 1, range: 78, fade: 38, blades: 'full' } });
   assert.equal(phone[presetLevel('high')].pixelRatio, 2);
   assert.equal(autoStartLevel(true), 1); assert.equal(autoStartLevel(false), 3);
   for (const levels of [phone, desktop]) for (let i = 1; i < levels.length; i++) {
