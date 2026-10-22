@@ -8,7 +8,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Browser tests render on the CPU here (no GPU), at a few frames a second.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -20,7 +21,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - uses: actions/upload-artifact@v4
-        if: failure()
+        # Also when the job runs out of time, so the traces show where it stalled.
+        if: failure() || cancelled()
         with:
           name: browser-failure-traces
           path: output/playwright/

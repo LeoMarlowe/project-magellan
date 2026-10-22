@@ -817,6 +817,12 @@ function beginWorldLoad(continueDriving = false) {
     if (data.generation !== generation) return;
     if (data.error) { failed(data.error); return; }
     profiler.record(data.kind === 'water' ? 'workerWater' : 'workerBuild', data.workMs); completed.push(data);
+    // While the world loads there is no drive to keep smooth: install each
+    // result as it arrives and hand the worker its next job, rather than once
+    // per frame. Where frames are slow (software rendering, an old phone),
+    // that keeps the worker busy instead of waiting on the screen. As in
+    // frame(), the world is drawn once the moment it is ready.
+    if (loading) { processStreaming(); if (!loading) render(0); }
   };
   lastCX = lastCZ = Infinity; streamWorld(true);
 }

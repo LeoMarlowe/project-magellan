@@ -11,6 +11,11 @@ async function openGame(page, seed = 1, mode = 'browser') {
   return errors;
 }
 const snapshot = page => page.evaluate(() => window.__driveTest.snapshot());
+// CI has no GPU and renders on the CPU at a few frames a second, so long
+// real-time drives and flights fall behind their time limits there. Those run
+// on a real GPU (local runs, before every commit); their physics is covered by
+// the unit tests either way.
+const softwareRendering = () => (test.info().project.use.launchOptions?.args ?? []).some(arg => arg.includes('swiftshader'));
 test('deep water transforms the Blender car, floats with a wake, and reverses on shore', async ({ page }, testInfo) => {
   test.setTimeout(180000);
   const errors = await openGame(page, 3, 'water');
@@ -188,18 +193,14 @@ test('a purple ramp launches the car into a barrel roll and lands driveable', as
   expect(errors).toEqual([]);
 });
 
-test('keyboard jump, driving across chunks, recovery, and new-world reset', async ({ page }) => {
+test('keyboard jump, recovery, and new-world reset', async ({ page }) => {
   const errors = await openGame(page, 3);
   await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
   await page.keyboard.press('Space');
   await expect.poll(async () => (await snapshot(page)).vehicle.jumps).toBe(1);
   await expect.poll(async () => (await snapshot(page)).vehicle.grounded, { timeout: 10000 }).toBe(true);
   await page.keyboard.down('KeyW');
-  await expect.poll(async () => (await snapshot(page)).vehicle.distance, { timeout: 45000 }).toBeGreaterThan(430);
-  const moving = await snapshot(page);
-  expect(moving.grass.meshes).toBeLessThanOrEqual(9);
-  const renderLag = Math.hypot(moving.vehicle.x - moving.renderPose.x, moving.vehicle.z - moving.renderPose.z);
-  expect(renderLag).toBeGreaterThan(0); expect(renderLag).toBeLessThan(1);
+  await expect.poll(async () => (await snapshot(page)).vehicle.distance, { timeout: 30000 }).toBeGreaterThan(20);
   await page.keyboard.up('KeyW'); await page.keyboard.press('KeyR');
   const recovered = await snapshot(page);
   expect(Math.abs(recovered.vehicle.speed)).toBeLessThan(.01);
@@ -215,7 +216,35 @@ test('keyboard jump, driving across chunks, recovery, and new-world reset', asyn
   expect(errors).toEqual([]);
 });
 
-test('F unfolds the wings, the car takes off, climbs, and folds them to land', async ({ page }, testInfo) => {
+test('driving across chunks streams the world ahead and keeps the render pose close', async ({ page }) => {
+  test.skip(softwareRendering(), 'a 430 m real-time drive needs GPU frame rates');
+  const errors = await openGame(page, 3);
+  await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
+  await page.keyboard.down('KeyW');
+  await expect.poll(async () => (await snapshot(page)).vehicle.distance, { timeout: 45000 }).toBeGreaterThan(430);
+  const moving = await snapshot(page);
+  expect(moving.grass.meshes).toBeLessThanOrEqual(9);
+  const renderLag = Math.hypot(moving.vehicle.x - moving.renderPose.x, moving.vehicle.z - moving.renderPose.z);
+  expect(renderLag).toBeGreaterThan(0); expect(renderLag).toBeLessThan(1);
+  expect(errors).toEqual([]);
+});
+
+test('F unfolds the wings and folds them away again', async ({ page }) => {
+  const errors = await openGame(page, 3);
+  await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
+  await page.keyboard.press('KeyF');
+  await expect.poll(async () => (await snapshot(page)).flight.wingsVisible).toBe(true);
+  await expect(page.locator('#flyAction')).toHaveText('land');
+  expect((await snapshot(page)).flight.mode).toBe(true);
+  await page.keyboard.press('KeyF');
+  await expect.poll(async () => (await snapshot(page)).flight.wingsVisible, { timeout: 10000 }).toBe(false);
+  await expect(page.locator('#flyAction')).toHaveText('fly');
+  expect((await snapshot(page)).flight.mode).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test('the plane takes off, climbs, flies on three axes, and lands', async ({ page }, testInfo) => {
+  test.skip(softwareRendering(), 'a real-time take-off, climb and landing needs GPU frame rates');
   test.setTimeout(150000);
   const errors = await openGame(page, 3);
   await page.getByRole('button', { name: 'Start exploring', exact: true }).click();

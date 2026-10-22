@@ -194,7 +194,7 @@ npm test                 # unit tests, then browser tests
 npm run test:unit        # simulation and geometry only
 ```
 
-On macOS the browser tests render on the GPU through ANGLE Metal and take under 2 minutes on an Apple M2. CI (GitHub Actions, on every push and pull request) and other platforms use SwiftShader software rendering, which runs the game at about 4 fps and takes about 4 minutes. In test mode the simulation catches up by up to 0.5 s per frame, so driving still runs in real time in the same fixed physics steps. `PW_RENDERER=swiftshader npm run test:browser` reproduces CI locally, `PW_RENDERER=metal` forces the GPU, and `PW_CHANNEL=chrome` uses an installed Chrome. Failure traces and screenshots go to `output/playwright/`.
+On macOS the browser tests render on the GPU through ANGLE Metal and take under 2 minutes on an Apple M2. CI (GitHub Actions, on every push and pull request) and other platforms use SwiftShader software rendering, which runs the game at a few frames a second: the suite takes about 6 minutes on an M2 and roughly twice that on GitHub's runners. In test mode the simulation catches up by up to 0.5 s per frame, but on frames slower than that it falls behind real time, so the two long real-time runs (a 430 m drive across chunks, and a full take-off, climb and landing) are skipped under software rendering and run on the GPU; their physics is covered by the unit tests either way. `PW_RENDERER=swiftshader npm run test:browser` reproduces CI locally, `PW_RENDERER=metal` forces the GPU, and `PW_CHANNEL=chrome` uses an installed Chrome. Failure traces and screenshots go to `output/playwright/`.
 
 The tests cover, among other things:
 
