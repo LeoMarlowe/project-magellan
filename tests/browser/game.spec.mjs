@@ -339,6 +339,45 @@ test('held upright, a phone asks to be turned sideways and will not drive', asyn
   await expect(page.locator('body')).not.toHaveClass(/driving/);
   expect(errors).toEqual([]);
 });
+test('tilt steering: turning the phone steers, and the slider steps aside', async ({ page }) => {
+  // Chrome asks for motion access too; a phone that allows it grants these.
+  await page.context().grantPermissions(['accelerometer', 'gyroscope', 'magnetometer']);
+  const errors = await openGame(page, 3);
+  await page.locator('#tiltBtn').tap();
+  await expect(page.locator('#tiltBtn')).toHaveText('Tilt: On');
+  await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
+  await expect(page.locator('#steerSlider')).toBeHidden();
+  // Feed the phone's orientation as a real one would: turned like a wheel by
+  // `wheel` degrees (clockwise positive), tilted back 40°, in the current screen rotation.
+  const hold = wheel => page.evaluate(wheel => {
+    clearInterval(window.__tilt);
+    const send = () => {
+      const r = Math.PI / 180, lean = 40 * r, s = (screen.orientation?.angle ?? 0) * r;
+      const down = [Math.sin(wheel * r) * Math.cos(lean), -Math.cos(wheel * r) * Math.cos(lean), -Math.sin(lean)];
+      const dx = down[0] * Math.cos(s) + down[1] * Math.sin(s), dy = -down[0] * Math.sin(s) + down[1] * Math.cos(s);
+      let beta = Math.asin(-dy), gamma = Math.atan2(dx, -down[2]);
+      if (gamma >= Math.PI / 2 || gamma < -Math.PI / 2) { beta = Math.PI - beta; gamma += gamma > 0 ? -Math.PI : Math.PI; }
+      dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: beta / r, gamma: gamma / r }));
+    };
+    send(); window.__tilt = setInterval(send, 40);
+  }, wheel);
+  await hold(0);
+  await expect.poll(async () => (await snapshot(page)).controls.tiltActive).toBe(true);
+  expect(Math.abs((await snapshot(page)).controls.steer)).toBeLessThan(.05);
+  await hold(25);
+  await expect.poll(async () => (await snapshot(page)).controls.steer).toBeLessThan(-.5); // turned right: steer right
+  await hold(-25);
+  await expect.poll(async () => (await snapshot(page)).controls.steer).toBeGreaterThan(.5);
+  // Turned off, the slider is back and tilt steers nothing.
+  await page.evaluate(() => clearInterval(window.__tilt));
+  await page.locator('#pauseBtn').tap(); await page.locator('#tiltBtn').tap();
+  await expect(page.locator('#tiltBtn')).toHaveText('Tilt: Off');
+  await page.getByRole('button', { name: 'Keep exploring', exact: true }).click();
+  await expect(page.locator('#steerSlider')).toBeVisible();
+  expect((await snapshot(page)).controls).toMatchObject({ tilt: false, tiltActive: false });
+  expect(errors).toEqual([]);
+});
+
 test('a second world request cancels old work and touch controls still jump', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const errors = await openGame(page, 100003);

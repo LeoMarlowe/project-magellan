@@ -1081,6 +1081,8 @@ body.plane-mode #touch .simple-button { display:block; }
 body.plane-mode #touch .flight-ring { display:grid; }
 body.plane-mode #touch .steer-slider { display:none; }
 body.plane-mode #touch [data-control="jump"], body.plane-mode #touch [data-control="brake"] { display:none; }
+/* Tilt steering replaces the slider; its space is kept so Jump and Drift stay put. */
+body.tilt #touch .steer-slider { visibility:hidden; pointer-events:none; }
 @media(max-width:700px) { #touch .flight-ring { width:104px; height:104px; } }
 
 /* The narrowest phones (320–360 px): tighten the touch bar so the ring,

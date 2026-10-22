@@ -15,6 +15,7 @@ import { createGrass } from './grass.mjs?v=grass-7';
 import { createPerfMeter, createGpuTimer } from './perf-meter.mjs?v=perf-2';
 import { QUALITY_PRESETS, qualityLevels, presetLevel, autoStartLevel, createAutoQuality } from './quality.mjs?v=perf-1';
 import { controlAxis, steerAxis } from './controls.mjs?v=slider-1';
+import { readTilt, tiltAxes } from './tilt.mjs?v=tilt-1';
 import { toggleFlight, flightAxes, TAKEOFF_SPEED, STALL_SPEED } from './flight-motion.mjs?v=physics-16';
 import { createClouds } from './clouds.mjs?v=clouds-3';
 import { weatherAt } from './weather.mjs?v=clouds-3';
@@ -85,6 +86,7 @@ if (QUALITY_PRESETS.includes(qualityParam)) settings.quality = qualityParam;
 else if (testMode) settings.quality = coarse ? 'medium' : 'high';
 if (!QUALITY_PRESETS.includes(settings.quality)) settings.quality = 'auto';
 settings.sensitivity = clamp(Number(settings.sensitivity) || 1, .5, 1.5);
+settings.tilt = coarse && settings.tilt === true;
 // Flight always starts on the full controls; T switches for this visit only
 // (an older build remembered simple controls).
 delete settings.simpleFlight;
@@ -916,13 +918,17 @@ function syncInput() {
   input.simpleFlight = simpleFlight;
   // Analog axes add to the digital keys; physics clamps the combined value.
   // In the air the ring steers (x) and pitches (y, up climbs); otherwise the slider steers.
-  input.steer = ring.pointer !== null ? steerAxis(ring.x, settings.sensitivity) : slider.pointer === null ? undefined : steerAxis(slider.value, settings.sensitivity);
-  input.pitchAxis = ring.pointer === null ? undefined : steerAxis(ring.y, settings.sensitivity);
+  // With tilt steering on, the phone's turn steers (and rolls) and its tilt
+  // pitches, unless a finger is on the slider or ring.
+  const tilted = tiltActive() ? tiltAxes(tilt.reading, tilt.neutral) : null;
+  input.steer = ring.pointer !== null ? steerAxis(ring.x, settings.sensitivity) : slider.pointer !== null ? steerAxis(slider.value, settings.sensitivity) : tilted ? steerAxis(tilted.wheel, settings.sensitivity) : undefined;
+  input.pitchAxis = ring.pointer !== null ? steerAxis(ring.y, settings.sensitivity) : tilted && vehicle.flightMode ? steerAxis(tilted.pitch, settings.sensitivity) : undefined;
 }
 const throttleInput = () => controlAxis(input.throttle, input.up, input.down);
 function resume() {
   if ($('startBtn').disabled || upright()) return;
   running = true; started = true; resetTiming(); auto?.reset(performance.now());
+  if (settings.tilt) { requestTilt(); tilt.neutral = null; } // re-centre the climb/dive tilt
   $('menu').classList.add('closed'); $('menu').inert = true; $('menu').setAttribute('aria-hidden', 'true');
   $('pauseBtn').hidden = false; document.body.classList.add('driving'); renderer.domElement.focus({ preventScroll: true });
   if (!muted) initAudio();
@@ -1072,6 +1078,10 @@ function syncSettings() {
   $('qualityBtn').textContent = `Graphics: ${qualityNames[settings.quality]}${auto ? ` · ${level === 'medium+' ? 'Medium+' : qualityNames[level]}` : ''}`;
   $('sensitivity').value = Math.round(settings.sensitivity * 100);
   $('sensitivityValue').textContent = `${Math.round(settings.sensitivity * 100)}%`;
+  $('tiltBtn').textContent = `Tilt: ${settings.tilt ? 'On' : 'Off'}`; $('tiltBtn').setAttribute('aria-pressed', String(settings.tilt));
+  document.body.classList.toggle('tilt', settings.tilt);
+  $('touchGuide').textContent = settings.tilt ? 'Turn the phone like a steering wheel to steer; Jump and Drift sit at the left. ↑ accelerates, ↓ brakes or reverses, and FLY is beside them. In the air, turn to roll and tilt the top toward you to climb, away to dive; the ring works too.'
+    : 'Slide the left control to steer; Jump and Drift sit just above it. ↑ accelerates, ↓ brakes or reverses, and FLY is beside them. In the air the slider becomes a ring: drag up to climb, down to dive, sideways to roll.';
   $('perfBtn').textContent = `FPS meter: ${settings.perfMeter ? 'On' : 'Off'}`; $('perfBtn').setAttribute('aria-pressed', String(Boolean(settings.perfMeter)));
 }
 $('qualityBtn').onclick = () => {
@@ -1084,6 +1094,34 @@ $('perfBtn').onclick = () => {
   toast(settings.perfMeter ? 'FPS meter on' : 'FPS meter off');
 };
 $('sensitivity').oninput = e => { settings.sensitivity = clamp(Number(e.target.value) / 100, .5, 1.5); saveSettings(); syncSettings(); };
+
+// Tilt steering (phones): turn the phone like a steering wheel. The reading
+// comes from deviceorientation (see tilt.mjs); iPhones only send it once the
+// player allows motion access, which must be asked from a tap.
+const tilt = { reading: null, neutral: null, at: 0, permitted: typeof DeviceOrientationEvent === 'undefined' ? false : typeof DeviceOrientationEvent.requestPermission !== 'function' };
+// Fresh readings only: a sensor that stops sending stops steering.
+const tiltActive = () => settings.tilt && tilt.reading !== null && performance.now() - tilt.at < 500;
+const screenAngle = () => ((screen.orientation?.angle ?? window.orientation ?? 0) % 360 + 360) % 360;
+async function requestTilt() {
+  if (tilt.permitted || typeof DeviceOrientationEvent === 'undefined') return tilt.permitted;
+  try { tilt.permitted = await DeviceOrientationEvent.requestPermission() === 'granted'; } catch { tilt.permitted = false; }
+  return tilt.permitted;
+}
+addEventListener('deviceorientation', e => {
+  if (!settings.tilt || e.beta === null || e.gamma === null) return;
+  const next = readTilt(e.beta, e.gamma, screenAngle());
+  // Light smoothing takes the jitter out of cheaper sensors (about 50 ms).
+  if (tilt.reading && performance.now() - tilt.at < 200) for (const k of ['wheel', 'lean', 'grip']) next[k] = tilt.reading[k] + (next[k] - tilt.reading[k]) * .4;
+  tilt.reading = next; tilt.at = performance.now(); tilt.neutral ??= next.lean;
+  syncInput();
+});
+$('tiltBtn').onclick = async () => {
+  if (settings.tilt) { settings.tilt = false; tilt.reading = null; saveSettings(); syncSettings(); syncInput(); toast('Tilt steering off · slide to steer'); return; }
+  if (!await requestTilt()) { toast('Tilt needs motion access · allow it in your browser settings'); return; }
+  settings.tilt = true; tilt.neutral = null; saveSettings(); syncSettings();
+  toast('Tilt steering on · turn the phone like a wheel');
+  setTimeout(() => { if (settings.tilt && tilt.reading === null) { settings.tilt = false; saveSettings(); syncSettings(); toast('No tilt sensor found on this device'); } }, 1500);
+};
 
 // Steering slider in place of the ← → buttons. The track is fixed: the value
 // is read from its center, and the knob stops at either end however far the
@@ -1256,7 +1294,7 @@ const debris = createDebris(scene), rollPivot = new THREE.Vector3();
 let treeBreakage = null;
 const vehiclePresentation = createVehiclePresentation(vehicle, (x, z, heading) => groundAt(world, x, z, heading).y);
 let previousTime = performance.now(), accumulator = 0, uiTime = 0, mapTime = 0, idleRenderAt = 0, reportedLanding = 0;
-let reportedBoat = vehicle.boatMode, reportedFlying = vehicle.flying;
+let reportedBoat = vehicle.boatMode, reportedFlying = vehicle.flying, reportedPlane = vehicle.flightMode;
 function updateDesiredCamera(pose = vehicle) {
   vehiclePosition.set(pose.x, pose.y, pose.z);
   // In flight the camera follows the nose in three dimensions, so it stays
@@ -1389,9 +1427,11 @@ function frame(now) {
       reportedBoat = vehicle.boatMode;
       toast(reportedBoat ? 'Deep water — deploying boat hull' : 'Shore reached — returning to wheels');
     }
+    // Tilt pitch is measured from how the phone is held when the wings come out.
+    if (vehicle.flightMode !== reportedPlane) { reportedPlane = vehicle.flightMode; if (reportedPlane && tilt.reading) tilt.neutral = tilt.reading.lean; }
     if (vehicle.flying !== reportedFlying) {
       reportedFlying = vehicle.flying;
-      toast(reportedFlying ? coarse ? 'Airborne · drag the ring to climb, dive and roll · SIMPLE for easy controls · LAND folds the wings' : 'Airborne · Space climbs · Shift dives · T simple controls · F lands'
+      toast(reportedFlying ? coarse ? settings.tilt ? 'Airborne · turn the phone to roll · tilt toward you to climb, away to dive · LAND folds the wings' : 'Airborne · drag the ring to climb, dive and roll · SIMPLE for easy controls · LAND folds the wings' : 'Airborne · Space climbs · Shift dives · T simple controls · F lands'
         : vehicle.floating ? 'Splashdown — back to boat' : 'Touchdown');
     }
     if (vehicle.landings > reportedLanding) {
@@ -1432,5 +1472,5 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
   const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.meshes ?? []).reduce((m, mesh) => m + (mesh.isInstancedMesh ? mesh.count : 0), 0), 0);
-  return { clouds: { cloudiness: weather.clouds, drift: clouds.drift.toArray(), banks: clouds.count }, time: { hours: clock.hours, clock: clockLabel(clock.hours), day: dayLight.day, night: dayLight.night, sunHeight: dayLight.sun[1], key: sun.intensity, exposure: renderer.toneMappingExposure, headlights: lightsOn }, weather: { kind: weather.target.kind, region: weather.target.region, chance: weather.target.chance, rain: weather.rain, snow: weather.snow, particles: weatherFx.counts, fogColor: '#' + scene.fog.color.getHexString(), sun: sun.intensity }, horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: simpleFlight, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, stalePending: [...pending.values()].filter(job => job.generation !== generation).length, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, effectTypes: audio.vehicle.playedBy, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  return { clouds: { cloudiness: weather.clouds, drift: clouds.drift.toArray(), banks: clouds.count }, time: { hours: clock.hours, clock: clockLabel(clock.hours), day: dayLight.day, night: dayLight.night, sunHeight: dayLight.sun[1], key: sun.intensity, exposure: renderer.toneMappingExposure, headlights: lightsOn }, weather: { kind: weather.target.kind, region: weather.target.region, chance: weather.target.chance, rain: weather.rain, snow: weather.snow, particles: weatherFx.counts, fogColor: '#' + scene.fog.color.getHexString(), sun: sun.intensity }, horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: simpleFlight, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, tilt: settings.tilt, tiltActive: tiltActive(), pitchAxis: input.pitchAxis ?? null, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, stalePending: [...pending.values()].filter(job => job.generation !== generation).length, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, effectTypes: audio.vehicle.playedBy, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };
