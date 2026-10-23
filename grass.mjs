@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK, smoothstep } from './world.mjs?v=rivers-1';
+import { CHUNK, smoothstep } from './world.mjs?v=roadside-1';
 
 // Quality presets change density, fade and range live: the worker always
 // supplies the full shuffled set, and lower densities draw a prefix of it.

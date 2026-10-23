@@ -23,9 +23,9 @@ import { createSky } from './sky.mjs?v=clouds-8';
 import { daylight, advanceClock, clockLabel, startHour } from './daylight.mjs?v=day-3';
 import { createWeatherEffects, toneMappedHorizon } from './weather-effects.mjs?v=day-1';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=rivers-1';
+import { CHUNK, GRID, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=roadside-1';
 import { SNOW_LINE } from './landforms.mjs?v=terrain-1';
-import { ROAD_MAP } from './roads.mjs?v=rivers-1';
+import { ROAD_MAP } from './roads.mjs?v=roadside-1';
 import { buildLandmark, cloneOwnedGeometry, buildLandmarkStandins, landmarkSwapDistance } from './scenery.mjs?v=standin-5';
 
 const $ = id => document.getElementById(id);
@@ -206,6 +206,15 @@ const weather = { clouds: .38, clock: 0, check: 0, target: { kind: 'clear', stre
 const weatherColor = new THREE.Color(), skyTop = new THREE.Color(), overcast = { top: new THREE.Color(), bottom: new THREE.Color(), cloud: new THREE.Color() };
 const dayColor = new THREE.Color(), cloudTint = new THREE.Color(), surfaceLight = new THREE.Color(), skyPalette = { zenith: new THREE.Color(), horizon: new THREE.Color(), cloudLit: new THREE.Color(), cloudShade: new THREE.Color() };
 let dayLight = daylight(clock.hours);
+// Shared by the ground and the roadside: how wet the roads are, how much
+// fallen snow lies, how far speed calms the road's fine detail, the sky the
+// roads mirror when wet, and the car's headlights (xyz, on: w; and their
+// aim), which light up road paint and reflectors.
+const roadLook = { uWet: { value: 0 }, uSnowCover: { value: 0 }, uCalm: { value: 0 }, uSkyReflection: { value: new THREE.Color() }, uHeadlight: { value: new THREE.Vector4() }, uHeadlightDir: { value: new THREE.Vector3(0, 0, 1) } };
+const headlightGlsl = `uniform vec4 uHeadlight; uniform vec3 uHeadlightDir;
+  // How brightly the headlights shine back off a reflective surface here
+  // (road paint, reflectors): inside their beam, fading with distance.
+  float headlightGlow(vec3 world){vec3 to=world-uHeadlight.xyz;float dist=max(length(to),.001);return uHeadlight.w*smoothstep(.82,.97,dot(to/dist,uHeadlightDir))/(1.0+dist*dist/1600.0);}`;
 function updateWeather(dt) {
   const step = running ? dt : 0;
   weather.clock += step;
@@ -215,6 +224,12 @@ function updateWeather(dt) {
   const { kind, strength } = weather.target;
   weather.rain += ((kind === 'rain' ? strength : 0) - weather.rain) * ease;
   weather.snow += ((kind === 'snow' ? strength : 0) - weather.snow) * ease;
+  // Roads wet within seconds of steady rain and take about a minute to dry.
+  const raining = smoothstep(.12, .7, weather.rain), wet = roadLook.uWet;
+  wet.value += (raining - wet.value) * (!started || forcedWeather ? 1 : 1 - Math.exp(-step / (raining > wet.value ? 8 : 40)));
+  // Falling snow settles over about half a minute and melts in two.
+  const snowing = smoothstep(.12, .7, weather.snow), settled = roadLook.uSnowCover;
+  settled.value += (snowing - settled.value) * (!started || forcedWeather ? 1 : 1 - Math.exp(-step / (snowing > settled.value ? 25 : 120)));
   // Cloud cover leads the rain (it gathers ahead of it) and clears after.
   weather.clouds += ((weather.target.cloudiness ?? .38) - weather.clouds) * (!started || forcedWeather ? 1 : 1 - Math.exp(-step / 7));
   skyPalette.cloudiness = weather.clouds;
@@ -232,6 +247,7 @@ function updateWeather(dt) {
   skyColor.setRGB(...light.horizon).lerp(overcast.bottom, cover);
   skyTop.setRGB(...light.zenith).lerp(overcast.top, cover);
   skyPalette.zenith.copy(skyTop); skyPalette.horizon.copy(skyColor);
+  roadLook.uSkyReflection.value.copy(skyColor).lerp(skyTop, .3);
   skyPalette.cloudLit.setRGB(...light.cloudLit).lerp(overcast.cloud, cover); skyPalette.cloudShade.setRGB(...light.cloudShade).lerp(cloudTint.copy(overcast.cloud).multiplyScalar(.7), cover);
   sky.update(light, skyPalette, cover, clock.seconds);
   renderer.toneMappingExposure = light.exposure;
@@ -261,23 +277,31 @@ function updateWeather(dt) {
 
 // Paint roads directly onto the terrain surface. Geometry, collision height and
 // asphalt share one surface: no raised ribbons, seams or walls. Each terrain
-// tile carries its own road map (roads.mjs: distance to the nearest road, its
-// dash cycle, and how near another road is), built in the worker; its
-// material holds that texture, and every tile shares one shader program.
+// tile carries its own road map (roads.mjs: distance to the nearest road and
+// which side of it, its dash cycle, and how near another road is), and near
+// chunks a detail map too (solid lines, dips, junctions), built in the
+// worker; its material holds those textures, and every tile shares one
+// shader program.
 const streamUniforms = { uStreamCenter: streamCenterUniform };
 const grass = createGrass(streamUniforms.uStreamCenter, levels[qualityLevel].grass);
-function terrainSurface(roadMap, size) {
-  const texture = new THREE.DataTexture(roadMap, ROAD_MAP, ROAD_MAP, THREE.RGBAFormat);
+const roadTexture = data => {
+  const texture = new THREE.DataTexture(data, ROAD_MAP, ROAD_MAP, THREE.RGBAFormat);
   // No mipmaps: averaging distances would erase thin distant roads (the
   // shader's own antialiasing keeps them a pixel wide instead).
   texture.magFilter = THREE.LinearFilter; texture.minFilter = THREE.LinearFilter; texture.generateMipmaps = false; texture.needsUpdate = true;
+  return texture;
+};
+// Far tiles have no detail map: a blank one stands in (no solid lines, dips or junctions).
+const blankRoadInfo = new THREE.DataTexture(new Uint8Array([0, 0, 255, 128]), 1, 1, THREE.RGBAFormat); blankRoadInfo.needsUpdate = true;
+function terrainSurface(roadMap, size, roadInfo = null) {
+  const texture = roadTexture(roadMap), detail = roadInfo ? roadTexture(roadInfo) : blankRoadInfo;
   const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
-  material.onBeforeCompile = shader => { compileTerrain(shader); Object.assign(shader.uniforms, { uRoadMap: { value: texture }, uRoadSize: { value: size } }); };
-  material.customProgramCacheKey = () => 'terrain-roads-1';
-  material.userData.roadMap = texture;
+  material.onBeforeCompile = shader => { compileTerrain(shader); Object.assign(shader.uniforms, { uRoadMap: { value: texture }, uRoadInfo: { value: detail }, uRoadSize: { value: size } }); };
+  material.customProgramCacheKey = () => 'terrain-roads-2';
+  material.userData.roadMaps = roadInfo ? [texture, detail] : [texture];
   return material;
 }
-const disposeSurface = material => { material.userData.roadMap?.dispose(); material.dispose(); };
+const disposeSurface = material => { material.userData.roadMaps?.forEach(texture => texture.dispose()); material.dispose(); };
 // Drawn just in front of the ground it rests on at either end.
 const bridgeMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .9, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
 // Geometry is already coarse at the streaming boundary. Moving the boundary
@@ -292,40 +316,102 @@ float ultraBlend(){return smoothstep(${ULTRA_BLEND_START.toFixed(1)},${ULTRA_BLE
 `;
 
 function compileTerrain(shader) {
-  Object.assign(shader.uniforms, streamUniforms, waterSystem.causticUniforms);
+  Object.assign(shader.uniforms, streamUniforms, waterSystem.causticUniforms, roadLook);
   shader.vertexShader = lodDeclaration + 'varying vec2 vGroundXZ; varying vec3 vGroundWorld;\n' + shader.vertexShader;
   shader.vertexShader = shader.vertexShader.replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nobjectNormal=mix(objectNormal,coarseNormal,terrainBlend());');
   shader.vertexShader = shader.vertexShader.replace('#include <color_vertex>', '#include <color_vertex>\nvColor=mix(vColor,coarseColor,terrainBlend());');
   shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed.y=mix(mix(position.y,coarseHeight,terrainBlend()),ultraHeight,ultraBlend());\nvGroundXZ=(modelMatrix*vec4(position,1.0)).xz;vGroundWorld=(modelMatrix*vec4(transformed,1.0)).xyz;vRoadUV=position.xz/uRoadSize;');
   shader.fragmentShader = `varying vec2 vGroundXZ; varying vec3 vGroundWorld; varying vec2 vRoadUV;
-    uniform float uTime; uniform vec4 uCausticLake; uniform sampler2D uRoadMap;
+    uniform float uTime; uniform vec4 uCausticLake; uniform sampler2D uRoadMap, uRoadInfo; uniform float uWet, uSnowCover, uCalm; uniform vec3 uSkyReflection;
+    ${headlightGlsl}
+    float terrainRough=1.0, terrainMirror=0.0;
     float grain(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453);}
     float smoothGrain(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(grain(i),grain(i+vec2(1,0)),f.x),mix(grain(i+vec2(0,1)),grain(i+vec2(1,1)),f.x),f.y);}
   ` + shader.fragmentShader;
+  shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor=terrainRough;');
+  shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+    // Wet roads mirror the sky, most at grazing angles.
+    if(terrainMirror>0.0){float facing=clamp(dot(normal,normalize(vViewPosition)),0.0,1.0);outgoingLight+=uSkyReflection*terrainMirror*(.04+.96*pow(1.0-facing,5.0));}
+    #include <opaque_fragment>`);
   shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
-    // The nearest road, from this tile's road map: its distance, where its
-    // centre-line dashes fall, and how near another road is (at junctions
-    // the edge lines and dashes give way).
+    // The nearest road, from this tile's road maps: its distance and which
+    // side of it, where its centre-line dashes fall, how near another road is,
+    // and (near chunks) solid lines, dips and junctions.
     vec2 p=vGroundXZ;
-    vec4 road=texture2D(uRoadMap,vRoadUV);
-    float d=road.r*12.75, dashes=road.g*2.0-1.0, otherRoad=road.b*25.5;
-    float aa=max(fwidth(d),.04); // derivatives outside the branch
+    vec4 road=texture2D(uRoadMap,vRoadUV), info=texture2D(uRoadInfo,vRoadUV);
+    float d=road.r*12.75, dashes=road.g*2.0-1.0, otherRoad=road.b*25.5, lateral=(road.a*2.0-1.0)*1.6, junction=(info.b*255.0-128.0)*.05;
+    // Inside a junction the roads join with rounded corners (a smooth union
+    // of their distances), and the edge lines follow the curve.
+    float zone=1.0-smoothstep(-.4,0.0,junction), join=clamp(.5+.1*(otherRoad-d),0.0,1.0), rd=mix(d,mix(otherRoad,d,join)-5.0*join*(1.0-join),zone);
+    // Derivatives outside the branch.
+    float aa=max(fwidth(rd),.04), aaSide=max(fwidth(lateral),.02), aaJunction=max(fwidth(junction),.03);
     // Ground metres per pixel. Detail finer than about two pixels can't be
     // shown: sampled anyway, each frame lands on different grains and the
     // ground crawls as you move. So each pattern fades to its average there.
-    vec2 fp=fwidth(p);float foot=max(fp.x,fp.y);
+    vec2 fp=fwidth(p);float foot=max(fp.x,fp.y), fine=1.0-smoothstep(.04,.12,foot);
     float shoulder=0.0;
+    // Rain darkens the ground a little and the roads more; wet asphalt and
+    // puddles turn glossy and mirror the sky (terrainMirror, after lighting).
+    terrainRough=1.0;
+    diffuseColor.rgb*=1.0-.18*uWet;
+    // Fallen snow dusts the ground (thinner on slopes).
+    if(uSnowCover>0.0){float level=abs(normalize(cross(dFdx(vGroundWorld),dFdy(vGroundWorld))).y);diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.74,.77,.78),uSnowCover*.62*smoothstep(.55,.85,level));}
     // Away from roads (most of the ground) the asphalt work is skipped.
-    if(d<6.6+aa){
-      shoulder=1.0-smoothstep(5.0,6.6,d);
-      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.34,.31,.235),shoulder*.68);
-      float asphalt=1.0-smoothstep(4.65-aa,4.65+aa,d);
-      // 11 cm grains, smoothly blended: hard-edged cells flicker at any range.
-      float speckle=mix(smoothGrain(p*9.0),.5,smoothstep(.03,.08,foot));
-      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.105,.124,.12)+speckle*.018,asphalt);
-      float edge=(1.0-smoothstep(.065,.065+aa,abs(d-4.13)))*smoothstep(5.0,6.0,otherRoad);
-      float dash=(1.0-smoothstep(.065,.065+aa,d))*smoothstep(-.06,.06,dashes)*smoothstep(8.0,11.0,otherRoad);
-      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.77,.72,.56),max(edge*.7,dash*.88));
+    if(rd<7.6+aa){
+      vec3 base=diffuseColor.rgb;
+      // The region, from the ground's own colour: sand or snow.
+      float sand=smoothstep(.26,.4,base.r-base.b)*smoothstep(.3,.42,base.g), snow=max(smoothstep(.48,.64,min(base.r,min(base.g,base.b))),uSnowCover);
+      // How old the road is here: older roads are paler and patched, their paint scuffed.
+      float age=smoothGrain(p*.0023+vec2(3.7,1.3));
+      // Gravel shoulders, ragged where they meet the grass (sand or snow verges in those regions).
+      // At speed the finest, sharpest detail softens (uCalm: 0 below about
+      // 40 km/h, 1 above 120): racing past, consecutive frames can no longer
+      // be matched up and it would seem to stutter, as the grass would.
+      float still=1.0-uCalm;
+      float rag=((smoothGrain(p*.9)-.5)*1.1*(.4+.6*still)+(smoothGrain(p*3.1+2.0)-.5)*.5*still)*fine;
+      shoulder=1.0-smoothstep(5.7+rag,6.7+rag+uCalm*.8,rd);
+      vec3 gravel=vec3(.30,.28,.235)*(.82+.36*still*mix(smoothGrain(p*6.5+11.0),.5,1.0-fine));
+      diffuseColor.rgb=mix(base,mix(gravel,base,max(sand*.75,snow*.9)),shoulder*.8);
+      // Sand drifts in over the edges in the desert.
+      float drift=sand*(smoothGrain(p*.42+5.0)*.7+(.5+(smoothGrain(p*1.6)-.5)*still)*.3), edgeAt=4.65-1.8*drift*drift*drift, soft=aa+uCalm*sand*.7;
+      float asphalt=1.0-smoothstep(edgeAt-soft,edgeAt+soft,rd);
+      // Dark when new, paler with age, sun-bleached in the desert; 11 cm
+      // grains, smoothly blended (hard-edged cells flicker at any range).
+      vec3 tarmac=mix(vec3(.105,.124,.12),vec3(.16,.165,.155),age*.75);
+      tarmac=mix(tarmac,vec3(.22,.205,.175),sand*.85)+mix(smoothGrain(p*9.0),.5,smoothstep(.03,.08,foot))*.018*still;
+      // Repair patches: fresh dark tar or old pale asphalt.
+      float pn=smoothGrain(p*.31+17.0)*.62+smoothGrain(p*1.1+4.0)*.38, pw=foot*.4+.006+uCalm*.04, pt=.77-age*.09;
+      float patched=smoothstep(pt-pw,pt+pw,pn)*(1.0-.5*zone)*(.4+.6*fine);
+      tarmac*=mix(1.0,smoothGrain(p*.031)>.5?.86:1.16,patched*(1.0-.6*uCalm));
+      // Two darker, smoother wheel tracks in each lane.
+      float tracks=(exp(-pow((d-1.45)/.4,2.0))+exp(-pow((d-3.15)/.4,2.0)))*(1.0-zone);
+      tarmac*=1.0-.13*tracks;
+      // Grey slush along the edges where snow lies.
+      float slush=snow*smoothstep(3.0,4.4,rd+(smoothGrain(p*.8)-.5)*1.4*(.4+.6*still));
+      tarmac=mix(tarmac,vec3(.36,.36,.35),slush*.7)*(1.0-.42*uWet);
+      diffuseColor.rgb=mix(diffuseColor.rgb,tarmac,asphalt);
+      // Markings: edge lines (around a junction's corners), the centre line
+      // (dashed, or a solid double line on bends and crests, ending before
+      // each junction), and a stop line across a side road's incoming lane.
+      float edge=(1.0-smoothstep(.065,.065+aa,abs(rd-4.13)))*mix(smoothstep(3.9,4.4,otherRoad),1.0,zone);
+      float single=(1.0-smoothstep(.065,.065+aaSide,abs(lateral)))*smoothstep(-.06,.06,dashes);
+      float twin=1.0-smoothstep(.05,.05+aaSide,abs(abs(lateral)-.16));
+      float centre=mix(single,twin,smoothstep(.4,.6,info.r))*smoothstep(.45,.45+aaJunction,junction)*(1.0-step(1.0,d));
+      float approach=info.a*2.0-1.0;
+      float stop=smoothstep(.5,.7,abs(approach))*smoothstep(.1,.2,lateral*sign(approach))*(1.0-smoothstep(4.2,4.2+aa,d))*(1.0-smoothstep(.25,.25+aaJunction,abs(junction-.27)));
+      float wear=clamp(age*.55+(smoothGrain(p*2.3)-.5)*.6+(smoothGrain(p*9.0+3.0)-.5)*.4*fine*still,0.0,1.0);
+      float paint=max(edge*.72,max(centre*.88,stop*(1.0-.5*tracks)*.9))*(1.0-.6*wear)*(1.0-.55*patched)*(1.0-.8*slush)*asphalt;
+      vec3 paintColor=vec3(.77,.72,.56);
+      diffuseColor.rgb=mix(diffuseColor.rgb,paintColor,paint);
+      // Road paint is retroreflective: in the headlights it shines back.
+      totalEmissiveRadiance+=paintColor*paint*headlightGlow(vGroundWorld);
+      // Puddles gather in dips, along the edges and in the wheel tracks.
+      float pool=smoothGrain(p*.33+9.0)*.65+smoothGrain(p*1.2)*.35+tracks*.12+smoothstep(3.6,4.6,d)*.1, pp=1.02-uWet*(.22+.5*info.g), ppw=foot*.4+.01;
+      float puddle=smoothstep(pp-ppw,pp+ppw,pool)*asphalt*uWet;
+      diffuseColor.rgb*=1.0-.5*puddle;
+      terrainRough=mix(1.0,mix(.92,mix(.34,.16,tracks),uWet),asphalt);
+      terrainRough=mix(terrainRough,.05,puddle);
+      terrainMirror=min(1.0,asphalt*uWet*(.32+.25*tracks)+puddle*.7);
     }
     // Meadow ground (green, off the road): fine grass speckle that fades out
     // with distance and where pixels outgrow it, and broad lush and dry
@@ -367,7 +453,15 @@ function geometryFromData(data) {
   return geometry;
 }
 const material = (color, roughness = .85, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
-const postMaterial = material('#ded7b4');
+// Roadside furniture (roadside-data.mjs): one vertex-coloured mesh per chunk,
+// whose reflectors (retro) shine back in the headlights.
+const roadsideMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .7, side: THREE.DoubleSide });
+roadsideMaterial.userData.compileKey = 'reflectors-1';
+roadsideMaterial.userData.compile = shader => {
+  Object.assign(shader.uniforms, roadLook);
+  shader.vertexShader = 'attribute float retro; varying float vRetro; varying vec3 vRoadsideWorld;\n' + shader.vertexShader.replace('#include <fog_vertex>', '#include <fog_vertex>\nvRetro=retro;vRoadsideWorld=(modelMatrix*sceneryPosition).xyz;');
+  shader.fragmentShader = 'varying float vRetro; varying vec3 vRoadsideWorld;\n' + headlightGlsl + '\n' + shader.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance+=diffuseColor.rgb*vRetro*headlightGlow(vRoadsideWorld)*2.5;');
+};
 let nature = null, natureError = null;
 loadNatureLibrary().then(library => {
   nature = library; standinLooks = natureLooks(library); buildPendingStandins();
@@ -380,7 +474,6 @@ loadNatureLibrary().then(library => {
 });
 // Distant bushes: a squat rounded shape, fitted to each bush model's bounds.
 const bushGeo = new THREE.IcosahedronGeometry(1, 0).scale(1.1, .7, .9).translate(0, .45, 0);
-const postGeo = new THREE.BoxGeometry(.18, .95, .18).translate(0, .48, 0);
 const matrix = new THREE.Matrix4(), quaternion = new THREE.Quaternion(), upAxis = new THREE.Vector3(0, 1, 0), scaleVec = new THREE.Vector3(), pointVec = new THREE.Vector3();
 const fadingMaterials = new WeakSet();
 // Real props fade with distance. Trees, cacti, rocks, boulders, bushes and
@@ -401,6 +494,7 @@ function softenScenery(mat, mode = 'fade') {
   mat.alphaToCoverage = multisampled;
   mat.blending = multisampled ? THREE.NoBlending : THREE.NormalBlending;
   mat.depthWrite = multisampled;
+  const own = mat.userData.compile; // a material's own additions (roadside reflectors)
   mat.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, streamUniforms, { uStandins: standinUniform });
     shader.vertexShader = `attribute float groundDelta; ${swap ? 'attribute float swapAt; uniform float uStandins;' : ''} ${landmark ? 'attribute vec2 swapCenter;' : ''} uniform vec2 uStreamCenter; varying vec2 vSceneryXZ; varying float vSceneryCover;\n` + shader.vertexShader;
@@ -429,8 +523,9 @@ function softenScenery(mat, mode = 'fade') {
       float coverage=vSceneryCover>1.5?vSceneryCover-2.0:1.0-smoothstep(220.0,350.0,distance(vSceneryXZ,uStreamCenter));
       if(coverage<=0.001) discard;
       diffuseColor.a*=coverage;`);
+    own?.(shader);
   };
-  mat.customProgramCacheKey = () => `scenery-${mode}-v2`;
+  mat.customProgramCacheKey = () => `scenery-${mode}-v2${own ? '-' + mat.userData.compileKey : ''}`;
   mat.needsUpdate = true;
 }
 const chunks = new Map();
@@ -440,16 +535,16 @@ let worker, generation = 0, jobId = 0, jobs = [], pending = new Map(), completed
 let loading = true, resumeAfterLoad = false, loadingStarted = bootStarted, streamError = null;
 // Distant water is rebuilt in the worker after every 500 m of travel.
 let distantAt = { x: Infinity, z: Infinity }, distantReady = false;
-function buildChunk({ cx, cz, ground: groundData, roadMap, river, bridges, props, features, roadside, grass: grassData }) {
+function buildChunk({ cx, cz, ground: groundData, roadMap, roadInfo, river, bridges, props, features, roadside, grass: grassData }) {
   const buildStart = performance.now();
   const group = new THREE.Group(); group.position.set(cx * CHUNK, 0, cz * CHUNK);
   props = props.filter(p => !world.brokenProps.has(p.id));
   const propInstances = new Map();
-  const ground = new THREE.Mesh(geometryFromData(groundData), terrainSurface(roadMap, CHUNK));
+  const ground = new THREE.Mesh(geometryFromData(groundData), terrainSurface(roadMap, CHUNK, roadInfo));
   ground.geometry.userData.owned = true;
   ground.receiveShadow = true; group.add(ground);
   function instances(type, geometry, mat, variant) {
-    const list = (type === 'post' ? roadside : props).filter(p => p.type === type && (variant === undefined || nature.variantFor(p) === variant)); if (!list.length) return;
+    const list = props.filter(p => p.type === type && (variant === undefined || nature.variantFor(p) === variant)); if (!list.length) return;
     const mesh = new THREE.InstancedMesh(geometry, mat, list.length);
     list.forEach((p, i) => {
       pointVec.set(p.x - cx * CHUNK, p.y - .08, p.z - cz * CHUNK); quaternion.setFromAxisAngle(upAxis, p.turn); scaleVec.setScalar(p.size); matrix.compose(pointVec, quaternion, scaleVec); mesh.setMatrixAt(i, matrix);
@@ -461,7 +556,26 @@ function buildChunk({ cx, cz, ground: groundData, roadMap, river, bridges, props
   for (const [kind, variants] of Object.entries(nature.variants)) {
     variants.forEach(({ geometry, material }, variant) => instances(kind, geometry, material, variant));
   }
-  instances('post', postGeo, postMaterial);
+  if (roadside?.mesh) {
+    const geometry = new THREE.BufferGeometry();
+    for (const [name, size] of [['position', 3], ['normal', 3], ['color', 3], ['retro', 1], ['groundDelta', 1]]) geometry.setAttribute(name, new THREE.BufferAttribute(roadside.mesh[name], size));
+    geometry.computeBoundingSphere(); geometry.userData.owned = true;
+    const mesh = new THREE.Mesh(geometry, roadsideMaterial); mesh.name = 'Roadside'; mesh.castShadow = mesh.receiveShadow = true;
+    // World-space vertices: the group's offset is undone.
+    mesh.position.set(-cx * CHUNK, 0, -cz * CHUNK); group.add(mesh);
+  }
+  // Each sign is its own piece standing on its foot, so it can be knocked
+  // over (and stays down, as it fell, when the chunk comes back).
+  const signs = new Map();
+  for (const sign of roadside?.signs?.list || []) {
+    const geometry = new THREE.BufferGeometry(), range = (name, size) => roadside.signs[name].slice(sign.start * size, (sign.start + sign.count) * size);
+    for (const [name, size] of [['position', 3], ['normal', 3], ['color', 3], ['retro', 1], ['groundDelta', 1]]) geometry.setAttribute(name, new THREE.BufferAttribute(range(name, size), size));
+    geometry.computeBoundingSphere(); geometry.userData.owned = true;
+    const mesh = new THREE.Mesh(geometry, roadsideMaterial); mesh.name = 'Sign'; mesh.castShadow = mesh.receiveShadow = true;
+    mesh.position.set(sign.x - cx * CHUNK, sign.y, sign.z - cz * CHUNK);
+    if (world.brokenProps.has(sign.id)) mesh.quaternion.setFromAxisAngle(fallenSigns.get(sign.id) || pointVec.set(1, 0, 0), SIGN_DOWN);
+    signs.set(sign.id, mesh); group.add(mesh);
+  }
   for (const feature of features) {
     const landmark = buildLandmark(feature, world); landmark.userData.feature = feature;
     landmark.position.x -= cx * CHUNK; landmark.position.z -= cz * CHUNK; group.add(landmark);
@@ -469,7 +583,9 @@ function buildChunk({ cx, cz, ground: groundData, roadMap, river, bridges, props
   group.updateMatrixWorld(true);
   group.traverse(o => {
     if (!o.isMesh || o === ground) return;
-    // Match the terrain's gradual height change so distant trees stay rooted.
+    // Match the terrain's gradual height change so distant trees stay rooted
+    // (the roadside arrives with its own, worked out in the worker).
+    if (o.geometry.getAttribute('groundDelta')) { softenScenery(o.material, 'fade'); return; }
     if (!o.geometry.userData.owned) o.geometry = cloneOwnedGeometry(o.geometry);
     const deltas = [], position = o.geometry.getAttribute('position');
     for (let i = 0; i < (o.isInstancedMesh ? o.count : position.count); i++) {
@@ -506,11 +622,30 @@ function buildChunk({ cx, cz, ground: groundData, roadMap, river, bridges, props
     // Placed at the origin; the group's offset is undone so its world-space vertices stay put.
     mesh.position.set(-cx * CHUNK, 0, -cz * CHUNK); group.add(mesh);
   }
-  scene.add(group); chunks.set(`${cx},${cz}`, { cx, cz, group, ground, grassMesh, riverMesh, props, features, propInstances });
+  scene.add(group); chunks.set(`${cx},${cz}`, { cx, cz, group, ground, grassMesh, riverMesh, props, barriers: roadside?.obstacles || [], signs, features, propInstances });
+}
+// Signs knocked over: each tips about its foot the way the car was going,
+// falling faster and faster until it lies on the ground.
+const fallingSigns = [], fallenSigns = new Map(), SIGN_DOWN = 1.45;
+function updateFallingSigns(dt) {
+  for (let i = fallingSigns.length - 1; i >= 0; i--) {
+    const fall = fallingSigns[i]; fall.t += dt;
+    const k = Math.min(1, fall.t / .75);
+    fall.mesh.quaternion.setFromAxisAngle(fall.axis, SIGN_DOWN * k * k);
+    if (k >= 1) fallingSigns.splice(i, 1);
+  }
 }
 function processBreakage() {
   for (const prop of world.drainBreakEvents()) {
     const chunk = chunks.get(`${Math.floor(prop.x / CHUNK)},${Math.floor(prop.z / CHUNK)}`);
+    if (prop.type === 'sign') {
+      const speed = Math.hypot(prop.vx, prop.vz) || 1, axis = new THREE.Vector3(prop.vz / speed, 0, -prop.vx / speed);
+      fallenSigns.set(prop.id, axis);
+      const mesh = chunk?.signs.get(prop.id);
+      if (mesh) fallingSigns.push({ mesh, axis, t: 0 });
+      if (!muted && audio) audio.breaks.play('sign', speed, panAt(prop.x, prop.z));
+      continue;
+    }
     for (const { mesh, index } of chunk?.propInstances.get(prop.id) || []) {
       mesh.getMatrixAt(index, matrix); matrix.scale(scaleVec.set(0, 0, 0)); mesh.setMatrixAt(index, matrix); mesh.instanceMatrix.needsUpdate = true;
     }
@@ -827,9 +962,12 @@ function processStreaming() {
 // built at load with everything else.
 const bridgeWarmup = new THREE.Mesh(new THREE.BufferGeometry(), bridgeMaterial);
 bridgeWarmup.castShadow = bridgeWarmup.receiveShadow = true;
+const roadsideWarmup = new THREE.Mesh(new THREE.BufferGeometry(), roadsideMaterial);
+roadsideWarmup.castShadow = true;
 function precompileShaders() {
+  softenScenery(roadsideMaterial, 'fade');
   renderer.compile(scene, camera);
-  for (const warmup of [grass.warmup, waterSystem.riverWarmup, bridgeWarmup]) renderer.compile(warmup, camera, scene);
+  for (const warmup of [grass.warmup, waterSystem.riverWarmup, bridgeWarmup, roadsideWarmup]) renderer.compile(warmup, camera, scene);
 }
 function beginWorldLoad(continueDriving = false) {
   if (running) pause();
@@ -841,7 +979,7 @@ function beginWorldLoad(continueDriving = false) {
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=rivers-1', import.meta.url), { type: 'module' });
+  worker = new Worker(new URL('./world-worker.mjs?v=roadside-1', import.meta.url), { type: 'module' });
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
   worker.onerror = error => failed(error.message);
   worker.onmessage = ({ data }) => {
@@ -859,7 +997,7 @@ function beginWorldLoad(continueDriving = false) {
 }
 function nearbyObstacles() {
   const cx = Math.floor(vehicle.x / CHUNK), cz = Math.floor(vehicle.z / CHUNK), result = [];
-  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) result.push(...(chunks.get(`${cx + dx},${cz + dz}`)?.props || []));
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) { const chunk = chunks.get(`${cx + dx},${cz + dz}`); if (chunk) result.push(...chunk.props, ...chunk.barriers); }
   return result;
 }
 
@@ -881,6 +1019,7 @@ loadVehicleModel(renderer).then(asset => {
 });
 const headlight = new THREE.SpotLight('#ffe4b1', 0, 60, .5, .5, 1.2); headlight.position.set(0, 1.5, 2);
 const lightTarget = new THREE.Object3D(); lightTarget.position.set(0, 0, 25); car.add(headlight, lightTarget); headlight.target = lightTarget;
+const headlightAt = new THREE.Vector3(), headlightAim = new THREE.Vector3();
 // Headlights come on by themselves at dusk and go off after sunrise, until you
 // choose with L for the rest of the visit.
 function setHeadlights(on) { headlight.intensity = on ? 75 : 0; headMat.emissiveIntensity = on ? 2 : .45; }
@@ -1395,6 +1534,7 @@ function render(dt) {
   const breeze = Math.hypot(weather.gust.x, weather.gust.z) || 1, storm = 1 + .7 * Math.max(weather.rain, weather.snow);
   // The simulation clock, so pausing freezes the grass like everything else.
   grass.animate(pose.time, pose.x, pose.y, pose.z, weather.gust.x / breeze * storm, weather.gust.z / breeze * storm, Math.abs(pose.speed));
+  roadLook.uCalm.value = smoothstep(11, 33, Math.abs(pose.speed)); // the road's fine detail softens at speed, like the grass
   if (pose.useAttitude) car.quaternion.set(pose.qx, pose.qy, pose.qz, pose.qw);
   else car.rotation.set(pose.pitch, pose.heading, pose.roll, 'YXZ');
   rollPivot.set(0, 1, 0).applyQuaternion(car.quaternion);
@@ -1458,6 +1598,9 @@ function render(dt) {
   profiler.measure('waterUpdate', () => waterSystem.update(world, pose, dt));
   const splashes = waterSystem.drainSplashes();
   if (audio && running && !muted) profiler.measure('audio', () => updateSound(throttle, splashes, dt));
+  headlight.getWorldPosition(headlightAt); lightTarget.getWorldPosition(headlightAim);
+  roadLook.uHeadlight.value.set(headlightAt.x, headlightAt.y, headlightAt.z, headlight.intensity > 0 ? .35 + .65 * dayLight.night : 0);
+  roadLook.uHeadlightDir.value.copy(headlightAim.sub(headlightAt).normalize());
   const renderStarted = performance.now();
   const timed = perfMeter.visible && gpuTimer;
   if (timed) gpuTimer.begin();
@@ -1496,7 +1639,7 @@ function frame(now) {
       vehiclePresentation.advance(vehicle, FIXED_DT); accumulator -= FIXED_DT;
     }
     profiler.record('physics', performance.now() - physicsStarted);
-    processBreakage(); debris.update(dt, world); treeBreakage.update(dt, world);
+    processBreakage(); debris.update(dt, world); treeBreakage.update(dt, world); updateFallingSigns(dt);
     if (vehicle.boatMode !== reportedBoat) {
       reportedBoat = vehicle.boatMode;
       toast(reportedBoat ? 'Deep water — deploying boat hull' : 'Shore reached — returning to wheels');

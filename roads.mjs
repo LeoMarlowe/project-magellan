@@ -16,6 +16,8 @@ const MAX_GRADE = .11;   // steepest the finished road may climb
 const MAX_CUT = 28;      // deepest cutting or highest embankment a road may need
 const CREST_RADIUS = 650, RAMP_GRADE = .08; // a bridge approach's rounded crest (metres) and its steepest grade
 const BUCKET = 96;       // road lookups are listed per 96 m square (a terrain chunk)
+const NO_PASSING_BEND = 110, NO_PASSING_CREST = 900; // radii (m): tighter bends and crests get a solid centre line
+const JUNCTION_KINK = .82;   // two roads meeting straighter than about 145° just continue (a junction otherwise)
 export const ROAD_REACH = 80; // roadAt is exact within this distance of a road
 export const ROAD_MAP = 128;  // road map texels per terrain tile side
 
@@ -166,7 +168,30 @@ export function createRoads({ seed, ground, mountainAt, wet, riverCost = () => 0
     if (cut > MAX_CUT) return null; // it would need a tunnel or a viaduct
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (let i = 0; i < count; i++) { x0 = Math.min(x0, points[i * 2]); x1 = Math.max(x1, points[i * 2]); z0 = Math.min(z0, points[i * 2 + 1]); z1 = Math.max(z1, points[i * 2 + 1]); }
-    return { id, points, level, count, length: total, bridges, box: [x0, z0, x1, z1] };
+    return { id, points, level, count, length: total, bridges, box: [x0, z0, x1, z1], ...profile(points, level, count, unit) };
+  }
+  // How the finished road bends and rises, for its markings and roadside:
+  // curve (radians per metre, smoothed over 60 m; positive bends to the
+  // left), solid (1 where the centre line is solid: tight bends and crests
+  // too sharp to see over, from 45 m before to 45 m after), and sag (0–1:
+  // dips, where rain water pools).
+  function profile(points, level, count, unit) {
+    const turn = new Float32Array(count), curve = new Float32Array(count), solid = new Uint8Array(count), sag = new Float32Array(count), mark = new Uint8Array(count);
+    for (let k = 1; k < count - 1; k++) {
+      const a = Math.atan2(points[k * 2] - points[k * 2 - 2], points[k * 2 + 1] - points[k * 2 - 1]), b = Math.atan2(points[k * 2 + 2] - points[k * 2], points[k * 2 + 3] - points[k * 2 + 1]);
+      turn[k] = Math.atan2(Math.sin(b - a), Math.cos(b - a)) / unit;
+    }
+    for (let k = 0; k < count; k++) {
+      let sum = 0, n = 0;
+      for (let m = Math.max(0, k - 3); m <= Math.min(count - 1, k + 3); m++) { sum += turn[m]; n++; }
+      curve[k] = sum / n;
+      const bend = k > 0 && k < count - 1 ? (level[k - 1] + level[k + 1] - 2 * level[k]) / (unit * unit) : 0;
+      mark[k] = Math.abs(curve[k]) > 1 / NO_PASSING_BEND || bend < -1 / NO_PASSING_CREST ? 1 : 0;
+      sag[k] = smoothstep(1 / 3000, 1 / 700, bend);
+    }
+    const reach = Math.round(45 / unit);
+    for (let k = 0; k < count; k++) for (let m = Math.max(0, k - reach); m <= Math.min(count - 1, k + reach) && !solid[k]; m++) solid[k] = mark[m];
+    return { curve, solid, sag };
   }
 
   function* build(id, a, b) { const path = yield* route(a, b); yield; return path && finish(id, a, b, path); }
@@ -194,6 +219,68 @@ export function createRoads({ seed, ground, mountainAt, wet, riverCost = () => 0
     return pairs;
   }
   function edgesFrom(i, j) { return pairsFrom(i, j).map(([a, b]) => edge(a, b)).filter(Boolean); }
+
+  // Junctions: a waypoint where three or more roads meet, or two at a sharp
+  // angle. The straightest pair through it is the main road; the others are
+  // side roads, which stop and give way (right-hand traffic). Each arm's
+  // setback is how far from the waypoint its own markings end, clear of the
+  // other roads' asphalt (a side road's stop line lies just outside it).
+  const junctions = new Map();
+  function junctionAt(id) {
+    if (junctions.has(id)) return junctions.get(id);
+    const [i, j] = id.split(',').map(Number), node = nodeAt(i, j), arms = [];
+    if (node) for (let a = i - 1; a <= i; a++) for (let b = j - 1; b <= j; b++) for (const e of edgesFrom(a, b)) {
+      const [from, to] = e.id.split('>');
+      if (from !== id && to !== id) continue;
+      const start = from === id, p = along(e, start ? Math.min(20, e.length) : Math.max(0, e.length - 20)), len = Math.hypot(p.x - node.x, p.z - node.z) || 1;
+      arms.push({ e, start, dx: (p.x - node.x) / len, dz: (p.z - node.z) / len, main: false, setback: 0 });
+    }
+    let result = null;
+    if (arms.length >= 3 || (arms.length === 2 && arms[0].dx * arms[1].dx + arms[0].dz * arms[1].dz > -JUNCTION_KINK)) {
+      let best = Infinity, pair = null;
+      for (let m = 0; m < arms.length; m++) for (let n = m + 1; n < arms.length; n++) {
+        const dot = arms[m].dx * arms[n].dx + arms[m].dz * arms[n].dz;
+        if (dot < best) { best = dot; pair = [arms[m], arms[n]]; }
+      }
+      if (arms.length === 2) arms.forEach(arm => { arm.main = true; });
+      else if (best < -.77) pair.forEach(arm => { arm.main = true; });
+      for (const arm of arms) {
+        const others = arms.filter(o => o !== arm);
+        let t = 3;
+        for (; t < 45; t++) {
+          const p = along(arm.e, arm.start ? t : arm.e.length - t), cx = Math.cos(p.heading) * 4.3, cz = -Math.sin(p.heading) * 4.3;
+          if (others.every(o => [[p.x, p.z], [p.x + cx, p.z + cz], [p.x - cx, p.z - cz]].every(([x, z]) => distanceNear(o, x, z) > ROAD_HALF + 1))) break;
+        }
+        // An arm still beside another road 45 m out merges with it rather
+        // than meeting it: no stop line there.
+        if (t >= 45) arm.main = true;
+        arm.setback = t + (arm.main ? 0 : 1);
+      }
+      result = { id, x: node.x, z: node.z, arms };
+    }
+    bounded(junctions, 4000); junctions.set(id, result);
+    return result;
+  }
+  // Distance from a point to the first 60 m of a junction arm.
+  function distanceNear(arm, x, z) {
+    const e = arm.e, p = e.points, n = Math.min(e.count - 1, 6);
+    let best = Infinity;
+    for (let m = 0; m < n; m++) {
+      const k = arm.start ? m : e.count - 2 - m, ax = p[k * 2], az = p[k * 2 + 1], dx = p[k * 2 + 2] - ax, dz = p[k * 2 + 3] - az;
+      const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+      best = Math.min(best, Math.hypot(ax + dx * t - x, az + dz * t - z));
+    }
+    return best;
+  }
+  // A road's ends: the junction arm at each (null where the road just
+  // continues into the next).
+  function endsOf(e) {
+    if (!e.ends) {
+      const [a, b] = e.id.split('>'), arm = (id, start) => junctionAt(id)?.arms.find(o => o.e.id === e.id && o.start === start) || null;
+      e.ends = [arm(a, true), arm(b, false)];
+    }
+    return e.ends;
+  }
   // Every road segment within ROAD_REACH of a 96 m square.
   function bucket(bx, bz) {
     const key = `${bx},${bz}`;
@@ -261,8 +348,9 @@ export function createRoads({ seed, ground, mountainAt, wet, riverCost = () => 0
     }
     return best;
   }
-  // A point s metres along a road and side metres to its right (left if
-  // negative), with the road's heading there.
+  // A point s metres along a road and side metres to its left (right if
+  // negative; +x is to the left of a car heading +z), with the road's
+  // heading there.
   function along(e, s, side = 0) {
     const f = clamp(s / e.length, 0, 1) * (e.count - 1), k = Math.min(Math.floor(f), e.count - 2), t = f - k, p = e.points;
     const dx = p[k * 2 + 2] - p[k * 2], dz = p[k * 2 + 3] - p[k * 2 + 1], heading = Math.atan2(dx, dz);
@@ -271,36 +359,61 @@ export function createRoads({ seed, ground, mountainAt, wet, riverCost = () => 0
   // A road map for one terrain tile: ROAD_MAP² texels of RGBA. R: distance
   // to the nearest road's centre line (0–12.75 m, 5 cm steps); G: where the
   // centre-line dashes fall along it (the cosine of a 14 m cycle); B: distance
-  // to the nearest other road (0–25.5 m), so junctions don't overlay markings;
-  // A: 255. The ground shader paints the asphalt, edges and dashes from it,
-  // so every terrain tier shows the roads the physics drives on.
-  function roadMap(x0, z0, size, res = ROAD_MAP, decks = true) {
-    const n = res * res, texel = size / res, near = new Float32Array(n).fill(12.75), other = new Float32Array(n).fill(25.5);
-    const phase = new Float32Array(n), owner = new Int32Array(n).fill(-1), reach = 25.5 + texel;
+  // to the nearest other road (0–25.5 m); A: how far left of the centre line
+  // (±1.6 m, beyond which only the side counts; unlike R it changes evenly
+  // across the line, so a thin line drawn from it stays whole). The ground
+  // shader paints the asphalt, edges and dashes from it, so every terrain
+  // tier shows the roads the physics drives on.
+  //
+  // Near tiles (near: true) also get a detail map, and leave bridge decks to
+  // carry their own markings. R: 1 where the centre line is solid; G: dips
+  // where puddles gather (0–1); B: metres outside the nearest junction
+  // setback, negative inside the junction (±6.4 m in 5 cm steps; 255 with
+  // none near); A: 128, or 255 (0) on a side road's approach whose incoming
+  // lane lies left (right) of the centre line.
+  function roadMap(x0, z0, size, res = ROAD_MAP, near = true) {
+    const n = res * res, texel = size / res, nearest = new Float32Array(n).fill(12.75), other = new Float32Array(n).fill(25.5);
+    const phase = new Float32Array(n), side = new Float32Array(n), owner = new Int32Array(n).fill(-1), reach = 25.5 + texel;
     const list = roadsNear(x0 + size / 2, z0 + size / 2, size * .75 + reach);
     list.forEach((e, ei) => {
       const p = e.points, unit = e.length / (e.count - 1);
       for (let k = 0; k < e.count - 1; k++) {
-        if (decks && e.bridges.some(b => k >= b.i0 && k < b.i1)) continue; // the deck carries its own markings (far tiles paint the road on, as no deck is drawn there)
-        const ax = p[k * 2], az = p[k * 2 + 1], dx = p[k * 2 + 2] - ax, dz = p[k * 2 + 3] - az, len2 = dx * dx + dz * dz || 1;
+        if (near && e.bridges.some(b => k >= b.i0 && k < b.i1)) continue; // the deck carries its own markings (far tiles paint the road on, as no deck is drawn there)
+        const ax = p[k * 2], az = p[k * 2 + 1], dx = p[k * 2 + 2] - ax, dz = p[k * 2 + 3] - az, len2 = dx * dx + dz * dz || 1, len = Math.sqrt(len2);
         const i0 = Math.max(0, Math.floor((Math.min(ax, ax + dx) - reach - x0) / texel)), i1 = Math.min(res - 1, Math.ceil((Math.max(ax, ax + dx) + reach - x0) / texel));
         const j0 = Math.max(0, Math.floor((Math.min(az, az + dz) - reach - z0) / texel)), j1 = Math.min(res - 1, Math.ceil((Math.max(az, az + dz) + reach - z0) / texel));
         for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
           const x = x0 + (i + .5) * texel, z = z0 + (j + .5) * texel, t = clamp(((x - ax) * dx + (z - az) * dz) / len2, 0, 1);
           const d = Math.hypot(ax + dx * t - x, az + dz * t - z), q = j * res + i;
-          if (owner[q] === ei) { if (d < near[q]) { near[q] = d; phase[q] = (k + t) * unit; } }
-          else if (d < near[q]) { other[q] = Math.min(other[q], near[q]); near[q] = d; owner[q] = ei; phase[q] = (k + t) * unit; }
-          else other[q] = Math.min(other[q], d);
+          if (owner[q] !== ei) {
+            if (d >= nearest[q]) { other[q] = Math.min(other[q], d); continue; }
+            other[q] = Math.min(other[q], nearest[q]); owner[q] = ei;
+          } else if (d >= nearest[q]) continue;
+          nearest[q] = d; phase[q] = (k + t) * unit; side[q] = ((x - ax) * dz - (z - az) * dx) / len;
         }
       }
     });
-    const data = new Uint8Array(n * 4);
+    const map = new Uint8Array(n * 4), info = near ? new Uint8Array(n * 4) : null;
     for (let q = 0; q < n; q++) {
-      data[q * 4] = Math.round(Math.min(near[q], 12.75) / .05);
-      data[q * 4 + 1] = Math.round((Math.cos(phase[q] * Math.PI * 2 / 14) * .5 + .5) * 255);
-      data[q * 4 + 2] = Math.round(Math.min(other[q], 25.5) / .1); data[q * 4 + 3] = 255;
+      map[q * 4] = Math.round(Math.min(nearest[q], 12.75) / .05);
+      map[q * 4 + 1] = Math.round((Math.cos(phase[q] * Math.PI * 2 / 14) * .5 + .5) * 255);
+      map[q * 4 + 2] = Math.round(Math.min(other[q], 25.5) / .1);
+      map[q * 4 + 3] = Math.round((clamp(side[q], -1.6, 1.6) / 1.6 * .5 + .5) * 255);
+      if (!info) continue;
+      info[q * 4 + 2] = 255; info[q * 4 + 3] = 128;
+      if (owner[q] < 0) continue;
+      const e = list[owner[q]], s = phase[q], f = Math.min(s / e.length, 1) * (e.count - 1), k = Math.min(Math.floor(f), e.count - 2), t = f - k;
+      info[q * 4] = Math.round((e.solid[k] + (e.solid[k + 1] - e.solid[k]) * t) * 255);
+      info[q * 4 + 1] = Math.round((e.sag[k] + (e.sag[k + 1] - e.sag[k]) * t) * 255);
+      // The nearer junction end, if any: metres outside its setback.
+      const [a, b] = endsOf(e), fromA = a ? s - a.setback : Infinity, fromB = b ? e.length - b.setback - s : Infinity;
+      const from = Math.min(fromA, fromB), arm = fromA <= fromB ? a : b;
+      if (from < Infinity) info[q * 4 + 2] = Math.round(clamp(128 + from / .05, 0, 255));
+      // Arriving at a side road's start the car travels back along it, with
+      // its lane left of the line; arriving at its end, right of it.
+      if (arm && !arm.main && from < 40) info[q * 4 + 3] = arm.start ? 255 : 0;
     }
-    return data;
+    return { map, info };
   }
   // Work the network out ahead, a little at a time, so a car or plane never
   // waits on routing: returns true once every road near the point is ready.
@@ -313,5 +426,5 @@ export function createRoads({ seed, ground, mountainAt, wet, riverCost = () => 0
     }
     return true;
   }
-  return { roadAt, roadsNear, nearestRoad, along, roadMap, prepare, nodeAt, edgesFrom };
+  return { roadAt, roadsNear, nearestRoad, along, roadMap, prepare, nodeAt, edgesFrom, junctionAt, endsOf };
 }

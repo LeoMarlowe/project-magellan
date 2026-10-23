@@ -1,6 +1,6 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
 import { createLakes, lakeRadius } from './lakes.mjs?v=rivers-1';
-import { createRoads, ROAD_HALF, ROAD_REACH, ROAD_CELL } from './roads.mjs?v=rivers-1';
+import { createRoads, ROAD_HALF, ROAD_REACH, ROAD_CELL } from './roads.mjs?v=roadside-1';
 import { createRivers } from './rivers.mjs?v=rivers-1';
 import { stepAmphibious } from './amphibious-motion.mjs?v=physics-16';
 import { controlAxis } from './controls.mjs?v=slider-1';
@@ -262,7 +262,7 @@ export function createWorld(seed) {
     }
     return list.filter(p => !brokenProps.has(p.id));
   }
-  return { seed, height, surface, groundSurface, gradient, hollow, footOfSlope, mountainAt, woodlandAt, desertAt, roadAt, roadsNear: roads.roadsNear, prepareRoads: (x, z, r, ms) => rivers.prepare(x, z, r + 3 * ROAD_CELL, ms / 2) && roads.prepare(x, z, r, ms / 2), riversNear: rivers.riversNear, riverAt: rivers.riverAt, roadMap: roads.roadMap, alongRoad: roads.along, startHeading: starterRoad ? roads.along(starterRoad, 0).heading : 0, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, seasNear: lakes.seasNear, starterLake: lakes.starter, starterSea: lakes.starterSea, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
+  return { seed, height, surface, groundSurface, gradient, hollow, footOfSlope, mountainAt, woodlandAt, desertAt, roadAt, roadsNear: roads.roadsNear, prepareRoads: (x, z, r, ms) => rivers.prepare(x, z, r + 3 * ROAD_CELL, ms / 2) && roads.prepare(x, z, r, ms / 2), riversNear: rivers.riversNear, riverAt: rivers.riverAt, roadMap: roads.roadMap, alongRoad: roads.along, junctionAt: roads.junctionAt, roadEnds: roads.endsOf, startHeading: starterRoad ? roads.along(starterRoad, 0).heading : 0, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, seasNear: lakes.seasNear, starterLake: lakes.starter, starterSea: lakes.starterSea, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
 }
 
 export function featureLocal(feature, x, z) {
@@ -294,7 +294,10 @@ export function resolveObstacles(car, obstacles, world) {
     const breakable = ['tree', 'cactus', 'rock', 'boulder'].includes(o.type);
     const obstacleRadius = o.r || (o.type === 'rock' ? .55 * o.size : 0);
     if (!obstacleRadius) continue;
-    const dx = car.x - o.x, dz = car.z - o.z, radius = obstacleRadius + .93;
+    // A guardrail is a segment: the car meets its nearest point.
+    let ox = o.x, oz = o.z;
+    if (o.type === 'rail') { const ex = o.bx - o.ax, ez = o.bz - o.az, t = clamp(((car.x - o.ax) * ex + (car.z - o.az) * ez) / (ex * ex + ez * ez || 1), 0, 1); ox = o.ax + ex * t; oz = o.az + ez * t; }
+    const dx = car.x - ox, dz = car.z - oz, radius = obstacleRadius + .93;
     const d = Math.hypot(dx, dz);
     if (d >= radius) continue;
     const nx = d > 1e-6 ? dx / d : -Math.sin(car.heading), nz = d > 1e-6 ? dz / d : -Math.cos(car.heading);
@@ -302,6 +305,12 @@ export function resolveObstacles(car, obstacles, world) {
     if (breakable && world?.breakProp && impactSpeed >= (o.type === 'boulder' ? 26 : 18)) {
       world.breakProp(o, car.vx, car.vz); car.smashed++;
       car.vx *= .88; car.vz *= .88; car.impact = Math.max(car.impact, .2);
+      continue;
+    }
+    // Signs fold over at anything above a crawl, barely slowing the car.
+    if (o.type === 'sign' && world?.breakProp && impactSpeed > 1.5) {
+      world.breakProp(o, car.vx, car.vz); car.smashed++;
+      car.vx *= .97; car.vz *= .97; car.impact = Math.max(car.impact, .08);
       continue;
     }
     if (!o.r) continue; // Small stones remain forgiving at low speed.

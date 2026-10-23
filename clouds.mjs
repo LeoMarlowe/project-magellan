@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { hash } from './world.mjs?v=rivers-1';
+import { hash } from './world.mjs?v=roadside-1';
 
 // Soft, seeded cloud banks at 230–350 m, high enough to fly through. One
 // instanced draw of camera-facing puffs; they fade near the camera (no hard

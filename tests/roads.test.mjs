@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWorld, createVehicle, stepVehicle, FIXED_DT } from '../world.mjs';
+import { createWorld, createVehicle, stepVehicle, FIXED_DT, CHUNK, ROAD_HALF } from '../world.mjs';
+import { createTerrain } from '../terrain.mjs';
+import { buildRoadside } from '../roadside-data.mjs';
 
 // Two seeds' roads and rivers within 3 km of the start, worked out once.
 const RADIUS = 3000;
@@ -134,10 +136,103 @@ test('roads and rivers worked out a slice at a time match those worked out at on
 test('road maps paint each road where the physics puts it', () => {
   const world = worlds[0], road = roadsOf(world).find(r => !r.bridges.length), size = 96, res = 128;
   const p = world.alongRoad(road, road.length / 2), x0 = Math.floor(p.x / size) * size, z0 = Math.floor(p.z / size) * size;
-  const map = world.roadMap(x0, z0, size, res), texel = size / res;
+  const { map } = world.roadMap(x0, z0, size, res), texel = size / res;
   for (let j = 0; j < res; j += 7) for (let i = 0; i < res; i += 7) {
     const x = x0 + (i + .5) * texel, z = z0 + (j + .5) * texel, d = world.roadAt(x, z).d;
     // Distance to the road in 5 cm steps, out to 12.75 m.
     assert.ok(Math.abs(map[(j * res + i) * 4] * .05 - Math.min(d, 12.75)) < texel, `texel ${i}, ${j}: ${map[(j * res + i) * 4] * .05} m vs ${d} m`);
   }
+});
+
+test('junctions: a main road through each, and side roads that stop clear of it', () => {
+  for (const world of worlds) {
+    const seen = new Set(); let junctions = 0, sides = 0;
+    for (const road of roadsOf(world)) for (const id of road.id.split('>')) {
+      if (seen.has(id)) continue; seen.add(id);
+      const junction = world.junctionAt(id);
+      if (!junction) continue;
+      junctions++;
+      for (const arm of junction.arms) {
+        if (arm.main) continue;
+        sides++;
+        // Across the whole incoming lane, the stop line lies on this road alone.
+        const s = arm.start ? arm.setback : arm.e.length - arm.setback;
+        for (const lateral of [.3, 2, 4]) {
+          const p = world.alongRoad(arm.e, s, (arm.start ? 1 : -1) * lateral), here = world.roadAt(p.x, p.z);
+          assert.ok(here.id === arm.e.id && here.od > ROAD_HALF, `${id}: the stop line on ${arm.e.id} is clear of the other roads`);
+        }
+      }
+    }
+    assert.ok(junctions > 15 && sides > 30, `seed ${world.seed}: ${junctions} junctions, ${sides} side roads`);
+  }
+});
+
+test('the centre line is solid on about a fifth of the road, and road maps know which side of it a point lies', () => {
+  for (const world of worlds) {
+    let solid = 0, total = 0;
+    for (const road of roadsOf(world)) for (let k = 0; k < road.count; k++) { solid += road.solid[k]; total++; }
+    assert.ok(solid / total > .1 && solid / total < .4, `seed ${world.seed}: ${(solid / total * 100).toFixed(0)}% solid`);
+    const road = roadsOf(world).find(r => !r.bridges.length);
+    for (const side of [-1, 1]) {
+      const p = world.alongRoad(road, road.length / 2, side), x0 = Math.floor(p.x / CHUNK) * CHUNK, z0 = Math.floor(p.z / CHUNK) * CHUNK;
+      const { map, info } = world.roadMap(x0, z0, CHUNK, 128, true), q = (Math.floor((p.z - z0) / .75) * 128 + Math.floor((p.x - x0) / .75)) * 4;
+      assert.ok(Math.abs((map[q + 3] / 255 * 2 - 1) * 1.6 - side) < .2, `a point 1 m ${side > 0 ? 'left' : 'right'} of the centre line`);
+      // Mid-road: no junction near, and not a side road's approach.
+      assert.equal(info[q + 2], 255); assert.equal(info[q + 3], 128);
+    }
+    assert.equal(world.roadMap(0, 0, 384, 128, false).info, null, 'far tiles have no detail map');
+  }
+});
+
+test('roadside furniture stands beside the roads, belongs to its own chunk, and is the same every time', () => {
+  for (const world of worlds) {
+    const terrain = createTerrain(world); let rails = 0;
+    for (let cx = -8; cx <= 8; cx++) for (let cz = -8; cz <= 8; cz++) {
+      const { mesh, signs, obstacles } = buildRoadside(world, terrain, cx, cz);
+      // Each sign is its own piece, kept relative to its foot.
+      for (const sign of signs?.list || []) {
+        assert.ok(obstacles.some(o => o.type === 'sign' && o.id === sign.id));
+        for (let v = sign.start; v < sign.start + sign.count; v++) assert.ok(Math.hypot(signs.position[v * 3], signs.position[v * 3 + 2]) < 2.5 && signs.position[v * 3 + 1] > -.5, `${sign.id} drawn around its foot`);
+      }
+      if (mesh) {
+        const vertices = mesh.position.length / 3;
+        for (const name of ['normal', 'color']) assert.equal(mesh[name].length, vertices * 3);
+        for (const name of ['retro', 'groundDelta']) assert.equal(mesh[name].length, vertices);
+      }
+      for (const o of obstacles) {
+        assert.ok(Math.floor(o.x / CHUNK) === cx && Math.floor(o.z / CHUNK) === cz, 'each piece in the chunk it stands in');
+        const d = world.roadAt(o.x, o.z).d;
+        if (o.type === 'rail') { rails++; assert.ok(d > 5.8 && d < 6.4, `a guardrail ${d} m from the road`); }
+      }
+    }
+    assert.ok(rails > 50, `seed ${world.seed}: ${rails} guardrail pieces`);
+    const again = createWorld(world.seed), first = buildRoadside(world, terrain, 0, 0), second = buildRoadside(again, createTerrain(again), 0, 0);
+    assert.deepEqual(second.obstacles, first.obstacles); assert.deepEqual(second.mesh?.position, first.mesh?.position);
+  }
+});
+
+test('a car driven into a guardrail is stopped by it', () => {
+  const world = worlds[0], terrain = createTerrain(world), obstacles = [];
+  for (let cx = -8; cx <= 8 && !obstacles.some(o => o.type === 'rail'); cx++) for (let cz = -8; cz <= 8; cz++) obstacles.push(...buildRoadside(world, terrain, cx, cz).obstacles);
+  const rail = obstacles.find(o => o.type === 'rail'), road = world.roadAt(rail.x, rail.z), heading = Math.atan2(rail.x - road.x, rail.z - road.z);
+  const car = createVehicle(world, road.x - Math.sin(heading) * 3, road.z - Math.cos(heading) * 3, heading);
+  car.vx = Math.sin(heading) * 25; car.vz = Math.cos(heading) * 25;
+  for (let i = 0; i < 120; i++) stepVehicle(car, { up: true }, world, obstacles);
+  assert.ok(Math.hypot(car.x - road.x, car.z - road.z) < Math.hypot(rail.x - road.x, rail.z - road.z) - .9, 'held on the road side of the rail');
+});
+
+test('a car knocks a sign over and drives on', () => {
+  const world = createWorld(3), terrain = createTerrain(world), obstacles = [];
+  world.prepareRoads(0, 0, 1000, Infinity);
+  for (let cx = -2; cx <= 1; cx++) for (let cz = -2; cz <= 1; cz++) obstacles.push(...buildRoadside(world, terrain, cx, cz).obstacles);
+  const signs = obstacles.filter(o => o.type === 'sign');
+  assert.ok(signs.length >= 3, 'stop signs and a fingerpost at the first junction');
+  for (const sign of signs) {
+    const heading = Math.atan2(sign.x, sign.z), car = createVehicle(world, sign.x - Math.sin(heading) * 25, sign.z - Math.cos(heading) * 25, heading);
+    car.vx = Math.sin(heading) * 15; car.vz = Math.cos(heading) * 15;
+    for (let i = 0; i < 240; i++) stepVehicle(car, {}, world, obstacles);
+    assert.ok(world.brokenProps.has(sign.id), `${sign.id} knocked over`);
+    assert.ok(Math.hypot(car.x - sign.x, car.z - sign.z) > 5, 'the car carries on past it');
+  }
+  assert.equal(world.drainBreakEvents().filter(e => e.type === 'sign').length, signs.length);
 });

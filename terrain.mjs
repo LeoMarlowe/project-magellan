@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.js';
-import { GRID, smoothstep, clamp } from './world.mjs?v=rivers-1';
+import { GRID, smoothstep, clamp } from './world.mjs?v=roadside-1';
 import { lakeRadius } from './lakes.mjs?v=rivers-1';
 import { SNOW_LINE, TREELINE } from './landforms.mjs?v=terrain-1';
 import { noise } from './noise.mjs?v=terrain-1';
