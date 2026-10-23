@@ -1,81 +1,68 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes, lakeRadius } from './lakes.mjs?v=physics-16';
+import { createLakes, lakeRadius } from './lakes.mjs?v=rivers-1';
+import { createRoads, ROAD_HALF, ROAD_REACH, ROAD_CELL } from './roads.mjs?v=rivers-1';
+import { createRivers } from './rivers.mjs?v=rivers-1';
 import { stepAmphibious } from './amphibious-motion.mjs?v=physics-16';
 import { controlAxis } from './controls.mjs?v=slider-1';
 import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-16';
+import { clamp, mix, smoothstep, hash, random, noise } from './noise.mjs?v=terrain-1';
+import { createLandforms, TREELINE, SNOW_LINE } from './landforms.mjs?v=terrain-1';
+export { clamp, mix, smoothstep, hash, random, noise };
 export const CHUNK = 96;
 export const GRID = 4;
-export const ROAD_SPACING = 420;
-export const ROAD_HALF = 4.7;
+export { ROAD_HALF };
 export const FIXED_DT = 1 / 120;
 export const FEATURE_SPACING = CHUNK * 3;
 export const SPEED_LIMIT = 92; // Downhill cap; level-road cruising reaches ~300 km/h.
-export const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-export const mix = (a, b, t) => a + (b - a) * t;
-export function smoothstep(a, b, x) { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
-export function hash(x, z, seed) {
-  let h = seed ^ Math.imul(x, 374761393) ^ Math.imul(z, 668265263);
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-export function random(seed) {
-  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
-}
-export function noise(x, z, seed) {
-  const ix = Math.floor(x), iz = Math.floor(z);
-  // Quintic interpolation keeps the first and second derivatives continuous.
-  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
-  const u = fade(x - ix), v = fade(z - iz);
-  return mix(mix(hash(ix, iz, seed), hash(ix + 1, iz, seed), u), mix(hash(ix, iz + 1, seed), hash(ix + 1, iz + 1, seed), u), v);
-}
-
+// Scenery models the world picks by place, in the nature library's order.
+export const VARIANT = { tree: { snow: 2, stunted: 3, dead: 4 }, bush: { meadow: 0, desert: 1, juniper: 2 }, outcrop: { granite: 0, sandstone: 1, slab: 2 } };
 export function createWorld(seed) {
-  const phase = (seed % 10000) * .0006283185;
-  const roadCenter = (s, band, dir) => {
-    const p = phase + (dir === 'x' ? 1.8 : 0);
-    const a = p + band * 1.71, b = p * .7 + band * 2.13;
-    return band * ROAD_SPACING + 35 * (Math.sin(s * .0028 + a) - Math.sin(a)) + 12 * (Math.sin(s * .0065 + b) - Math.sin(b));
-  };
-  function roadAt(x, z) {
-    let result = { d: Infinity, x, z, dir: 'z', band: 0, s: z };
-    for (let k = -1; k <= 1; k++) {
-      const bz = Math.round(x / ROAD_SPACING) + k, bx = Math.round(z / ROAD_SPACING) + k;
-      const cx = roadCenter(z, bz, 'z'), cz = roadCenter(x, bx, 'x');
-      if (Math.abs(x - cx) < result.d) result = { d: Math.abs(x - cx), x: cx, z, dir: 'z', band: bz, s: z };
-      if (Math.abs(z - cz) < result.d) result = { d: Math.abs(z - cz), x, z: cz, dir: 'x', band: bx, s: x };
-    }
-    return result;
-  }
-  function mountainAt(x, z) { return smoothstep(.43, .75, noise(x * .00048 + 8.3, z * .00048 - 9.4, seed + 51)); }
+  const land = createLandforms(seed);
+  // The natural land, before roads and ramps shape it: lakes sit in it and
+  // roads are routed over it (roads.mjs), so neither depends on the other.
+  const natural = (x, z) => land.sample(x, z, 1).height;
+  const lakes = createLakes(seed, natural, (x, z) => roadAt(x, z));
+  const wet = (x, z) => { const lake = lakes.lakeAt(x, z); return Boolean(lake && lakeRadius(lake, x, z) < 1.1); };
+  // Rivers feed the seas (rivers.mjs); roads cross them where they are narrow.
+  const rivers = createRivers({ seed, ground: natural, wet, seasNear: lakes.seasNear, mountainAt: land.mountainAt });
+  const riverCost = (x, z) => { const r = rivers.riverAt(x, z); return r && r.d < r.width / 2 + 12 ? 6 : 0; };
+  const roads = createRoads({ seed, ground: natural, mountainAt: land.mountainAt, wet, riverCost, riverAt: rivers.riverAt });
+  const roadAt = roads.roadAt;
+  // The first road runs north from the start; the first ramps and the first
+  // lookout stand beside it.
+  const starterRoad = roads.edgesFrom(0, 0).find(e => e.id === '0,0>0,1');
+  const besideStart = (s, side) => starterRoad ? roads.along(starterRoad, s, side) : { x: side, z: s, heading: 0 };
+  // 0 away from the mountains, 1 in a range (see landforms.mjs).
+  const mountainAt = land.mountainAt;
   const featureCache = new Map();
   const brokenProps = new Set(), breakEvents = [];
   function breakProp(prop, vx, vz) {
     if (brokenProps.has(prop.id)) return;
     brokenProps.add(prop.id); breakEvents.push({ ...prop, vx, vz });
   }
-  const starterRamp = { id: 'first-jump', type: 'ramp', x: roadCenter(68, 0, 'z') - 19, z: 68, heading: Math.atan2(roadCenter(69, 0, 'z') - roadCenter(67, 0, 'z'), 2), width: 10, length: 24, rise: 5.2, back: 10 };
-  const starterTower = { id: 'first-lookout', type: 'lookout', x: roadCenter(145, 0, 'z') + 37, z: 145, heading: .15 };
-  const twistRamp = { id: 'first-roll', type: 'ramp', x: roadCenter(225, 0, 'z') + 24, z: 225, heading: 0, width: 12, length: 30, rise: 8, back: 14, twist: -1 };
+  const startJump = besideStart(68, -19), startTower = besideStart(145, 37), startRoll = besideStart(225, 24);
+  const starterRamp = { id: 'first-jump', type: 'ramp', x: startJump.x, z: startJump.z, heading: startJump.heading, width: 10, length: 24, rise: 5.2, back: 10 };
+  const starterTower = { id: 'first-lookout', type: 'lookout', x: startTower.x, z: startTower.z, heading: startTower.heading + .15 };
+  const twistRamp = { id: 'first-roll', type: 'ramp', x: startRoll.x, z: startRoll.z, heading: startRoll.heading, width: 12, length: 30, rise: 8, back: 14, twist: -1 };
   function featureAtCell(cx, cz) {
     const key = `${cx},${cz}`;
     if (featureCache.has(key)) return featureCache.get(key);
     const rng = random((hash(cx, cz, seed + 303) * 4294967296) >>> 0);
     let x = (cx + .5) * FEATURE_SPACING + (rng() - .5) * 60, z = (cz + .5) * FEATURE_SPACING + (rng() - .5) * 60;
-    const road = roadAt(x, z);
-    if (road.d < 35) { if (road.dir === 'z') x = road.x + Math.sign(x - road.x || 1) * 36; else z = road.z + Math.sign(z - road.z || 1) * 36; }
-    x = clamp(x, cx * FEATURE_SPACING + 85, (cx + 1) * FEATURE_SPACING - 85);
-    z = clamp(z, cz * FEATURE_SPACING + 85, (cz + 1) * FEATURE_SPACING - 85);
-    if (roadAt(x, z).d < 30) {
-      let best = { x, z, d: roadAt(x, z).d };
-      for (const dx of [-40, 0, 40]) for (const dz of [-40, 0, 40]) {
-        const px = clamp(x + dx, cx * FEATURE_SPACING + 85, (cx + 1) * FEATURE_SPACING - 85);
-        const pz = clamp(z + dz, cz * FEATURE_SPACING + 85, (cz + 1) * FEATURE_SPACING - 85), d = roadAt(px, pz).d;
-        if (d > best.d) best = { x: px, z: pz, d };
-      }
-      x = best.x; z = best.z;
-    }
-    const kind = rng(), type = kind < .58 ? 'ramp' : kind < .82 ? 'camp' : 'lookout';
-    const heading = (road.dir === 'x' ? Math.PI / 2 : 0) + (rng() - .5) * .6;
+    // Sites stand beside a road when one passes within 150 m: 36 m off it, on
+    // either side. Away from the roads only a few camps and lookouts remain.
+    const road = roads.nearestRoad(x, z, 150), side = hash(cx, cz, seed + 306) < .5 ? -1 : 1, wild = !road && hash(cx, cz, seed + 307) > .25;
+    if (road) { x = road.x + Math.cos(road.heading) * 36 * side; z = road.z - Math.sin(road.heading) * 36 * side; }
+    // Never on another road, nor crowding the cell's neighbours.
+    if (roadAt(x, z).d < 30) { x = road ? road.x + Math.cos(road.heading) * 60 * side : x; z = road ? road.z - Math.sin(road.heading) * 60 * side : z; }
+    x = clamp(x, cx * FEATURE_SPACING + 40, (cx + 1) * FEATURE_SPACING - 40);
+    z = clamp(z, cz * FEATURE_SPACING + 40, (cz + 1) * FEATURE_SPACING - 40);
+    // Ramps, camps and lookouts need fairly level ground: none on a mountain
+    // side, a mesa edge or a dune field's steep faces.
+    let lo = Infinity, hi = -Infinity;
+    for (const [dx, dz] of [[0, 0], [28, 0], [-28, 0], [0, 28], [0, -28]]) { const h = land.sample(x + dx, z + dz).height; lo = Math.min(lo, h); hi = Math.max(hi, h); }
+    const kind = rng(), type = hi - lo > 9 || wild || roadAt(x, z).d < 25 ? 'none' : !road ? (kind < .6 ? 'camp' : 'lookout') : kind < .58 ? 'ramp' : kind < .82 ? 'camp' : 'lookout';
+    const heading = (road ? road.heading : rng() * Math.PI * 2) + (rng() - .5) * .6;
     const feature = { id: `site:${cx},${cz}`, type, x, z, heading, width: 9 + rng() * 3, length: 22 + rng() * 8, rise: 4.5 + rng() * 3, back: 12 };
     if (type === 'ramp' && hash(cx, cz, seed + 804) < .4) {
       feature.twist = hash(cx, cz, seed + 805) < .5 ? -1 : 1;
@@ -91,7 +78,7 @@ export function createWorld(seed) {
     for (let cx = Math.floor((x - radius) / FEATURE_SPACING); cx <= Math.floor((x + radius) / FEATURE_SPACING); cx++) {
       for (let cz = Math.floor((z - radius) / FEATURE_SPACING); cz <= Math.floor((z + radius) / FEATURE_SPACING); cz++) result.push(featureAtCell(cx, cz));
     }
-    return result.filter(f => Math.hypot(f.x - x, f.z - z) < radius && !waterAt(f.x, f.z));
+    return result.filter(f => f.type !== 'none' && Math.hypot(f.x - x, f.z - z) < radius && !waterAt(f.x, f.z));
   }
   function rampLift(ramp, x, z) {
     if (ramp.type !== 'ramp') return 0;
@@ -118,29 +105,55 @@ export function createWorld(seed) {
       return f.type === 'ramp' ? Math.abs(p.across) < f.width / 2 + 9 && p.along > -30 && p.along < f.length + 220 : Math.hypot(p.across, p.along) < 18;
     });
   }
-  function baseHeight(x, z) {
-    const highland = (noise(x * .0016 + 17.4, z * .0016 - 5.3, seed + 11) - .5) * 30;
-    const hills = (noise(x * .0045 - 11.7, z * .0045 + 19.1, seed + 23) - .5) * 24;
-    const offroad = smoothstep(9, 34, roadAt(x, z).d);
-    const rugged = smoothstep(.25, .65, noise(x * .0028 - 4, z * .0028 + 7, seed + 71));
-    const rollers = (noise(x * .019 + 4.1, z * .019 + 3.2, seed + 31) - .5) * (1.2 + offroad * 10);
-    const ridgeline = Math.sin(x * .055 + z * .037 + noise(x * .004, z * .004, seed + 72) * 5);
-    const gullies = ridgeline * 5.8 * rugged * offroad;
-    const m = mountainAt(x, z);
-    const ridges = 1 - Math.abs(noise(x * .0018 + 18, z * .0018 - 21, seed + 61) * 2 - 1);
-    const relief = 150 * m * m * (.45 + .55 * ridges);
-    // Keep the natural height at spawn too. Flattening an arbitrary mountain
-    // down to zero creates an artificial bowl with steep walls around the car.
+  function baseHeight(x, z, road = roadAt(x, z)) {
+    // Plains, hills, mountain ranges, dunes and mesas (landforms.mjs); the
+    // small rollers calm down under roads.
+    let h = land.sample(x, z, smoothstep(9, 34, road.d)).height;
+    // Roads are cut and filled to their own smooth profile: level across the
+    // road and its shoulders, then a cutting or embankment back to the land,
+    // wider the deeper it is. Where two roads run side by side (leaving the
+    // same junction up one valley) the land meets both, so they share one
+    // level where they overlap. Under a bridge the land is left to the river.
+    if (road.d < ROAD_REACH && !road.bridge) {
+      // How firmly each road holds the land here, and (more gently, so roads
+      // drawing together ease toward one level) how much its level counts.
+      const reach = (level, d) => 1 - smoothstep(8, 9 + clamp(Math.abs(level - h) * 1.5, 3, 45), d), weight = d => 1 - smoothstep(4, 20, d);
+      const near = road.od < ROAD_REACH, other = near ? weight(road.od) : 0, own = weight(road.d);
+      h += ((road.level * own + road.olevel * other) / (own + other || 1) - h) * Math.max(reach(road.level, road.d), near ? reach(road.olevel, road.od) : 0);
+    }
+    // Ramps rise out of the land.
     const feature = featureAtCell(Math.floor(x / FEATURE_SPACING), Math.floor(z / FEATURE_SPACING));
-    return 12 + highland + hills + rollers + relief + gullies + rampLift(feature, x, z) + rampLift(starterRamp, x, z) + rampLift(twistRamp, x, z);
+    return h + rampLift(feature, x, z) + rampLift(starterRamp, x, z) + rampLift(twistRamp, x, z);
   }
-  const lakes = createLakes(seed, baseHeight, roadAt);
-  function computeHeight(x, z) { return lakes.carve(x, z, baseHeight(x, z)); }
+  function computeHeight(x, z) {
+    // Rivers carve their channels and valleys, sparing the roads beside them
+    // and a bridge's approach embankments (not its span), then lakes and seas
+    // their basins. Last, a bridge's
+    // approaches and abutments are built back up to the road, so the deck
+    // meets the land at its own level; only the river's channel and banks
+    // stay open beneath it.
+    const road = roadAt(x, z);
+    let h = baseHeight(x, z, road);
+    const spared = road.bridge ? 0 : road.approach && road.d < 14 ? 1 : 1 - smoothstep(6, 14, road.d);
+    if (spared < 1) h += (rivers.carve(x, z, h) - h) * (1 - spared);
+    h = lakes.carve(x, z, h);
+    if (road.approach && road.d < 16) {
+      const river = rivers.riverAt(x, z), open = river ? smoothstep(river.width / 2 + 1, river.width / 2 + 7, river.d) : 1;
+      h += (road.level - h) * (1 - smoothstep(8, 16, road.d)) * open;
+    }
+    return h;
+  }
   function waterAt(x, z) {
     const lake = lakes.lakeAt(x, z);
-    if (!lake || lakeRadius(lake, x, z) > 1.02) return null;
-    const depth = lake.level - surface(x, z);
-    return depth > 0 ? { lake, level: lake.level, depth } : null;
+    if (lake && lakeRadius(lake, x, z) <= 1.02) {
+      const depth = lake.level - groundSurface(x, z);
+      return depth > 0 ? { lake, level: lake.level, depth } : null;
+    }
+    // In a river's channel.
+    const river = rivers.riverAt(x, z);
+    if (!river || river.d > river.width / 2) return null;
+    const depth = river.level - groundSurface(x, z);
+    return depth > 0 ? { lake: { id: river.id, name: 'THE RIVER', level: river.level, river: true }, level: river.level, depth } : null;
   }
   // Chunk boundaries revisit most of the same terrain samples. Retain those
   // heights so a faster car doesn't rebuild the whole horizon every 96 m.
@@ -159,18 +172,33 @@ export function createWorld(seed) {
   }
   // Exactly the same triangles as the rendered 4 m terrain grid. This avoids
   // invisible bumps, wheel clipping, or a mismatch between visuals and physics.
-  function surface(x, z) {
+  function groundSurface(x, z) {
     const ix = Math.floor(x / GRID) * GRID, iz = Math.floor(z / GRID) * GRID;
     const u = (x - ix) / GRID, v = (z - iz) / GRID;
     const a = height(ix, iz), b = height(ix + GRID, iz), c = height(ix, iz + GRID), d = height(ix + GRID, iz + GRID);
     return u + v <= 1 ? a + (b - a) * u + (c - a) * v : d + (c - d) * (1 - u) + (b - d) * (1 - v);
   }
+  // What a car drives on: the ground, or a bridge deck over a river (unless
+  // whatever asks is well below the deck, like a boat passing beneath; y is
+  // its height, if known).
+  function surface(x, z, y = Infinity) {
+    const ground = groundSurface(x, z), road = roadAt(x, z);
+    return road.bridge && road.d < ROAD_HALF + .9 && y > road.level - 1.5 ? Math.max(ground, road.level) : ground;
+  }
   function gradient(x, z) { return { x: (surface(x + 2, z) - surface(x - 2, z)) / 4, z: (surface(x, z + 2) - surface(x, z - 2)) / 4 }; }
+  // How far a point sits below the ground around it, in metres: positive in
+  // hollows and valleys, negative on rises and ridges.
+  function hollow(x, z, r = 24) { return (height(x + r, z) + height(x - r, z) + height(x, z + r) + height(x, z - r)) / 4 - height(x, z); }
+  // 0–1: the foot of a slope, where a gentler slope gathers beneath steeper
+  // ground and loose rock collects.
+  function footOfSlope(x, z, slope = Math.hypot(gradient(x, z).x, gradient(x, z).z)) {
+    return smoothstep(.6, 3, hollow(x, z)) * smoothstep(.12, .3, slope) * (1 - smoothstep(.55, .8, slope));
+  }
   function woodlandAt(x, z) { return noise(x * .0031 - 13, z * .0031 + 27, seed + 87); }
-  // Broad, continuous dry regions; elevation keeps sand out of the snow line.
+  // Broad, continuous dry regions, never in the mountains; elevation keeps
+  // sand off high ground.
   function desertAt(x, z, elevation = height(x, z)) {
-    return smoothstep(.46, .67, noise(x * .0009 + 31, z * .0009 - 17, seed + 191))
-      * (1 - smoothstep(90, 117, elevation));
+    return land.desertMask(x, z) * (1 - mountainAt(x, z)) * (1 - smoothstep(150, 200, elevation));
   }
   function props(cx, cz) {
     const rng = random((hash(cx, cz, seed + 101) * 4294967296) >>> 0), list = [];
@@ -180,18 +208,53 @@ export function createWorld(seed) {
       const chance = rng(), size = .8 + rng() * .65, turn = rng() * Math.PI * 2;
       const woodland = woodlandAt(x, z), mountain = mountainAt(x, z), desert = desertAt(x, z);
       if (Math.hypot(x, z) < 24 || roadAt(x, z).d < 12 || waterAt(x, z) || reserved(x, z)) continue;
-      const slope = gradient(x, z);
-      if (Math.hypot(slope.x, slope.z) > .9) continue;
-      if (list.some(p => Math.hypot(p.x - x, p.z - z) < 7.5)) continue;
-      if (chance < .1 && mountain > .25) list.push({ id: `${cx},${cz}:${i}`, type: 'boulder', x, z, y: surface(x, z), size: size * 2.3, turn, r: size * 1.5, h: size * 2.6 });
-      else if (chance < .22) list.push({ id: `${cx},${cz}:${i}`, type: 'rock', x, z, y: surface(x, z), size, turn, r: 0, h: .65 * size });
-      else if (desert > .55) {
-        if (chance < .72) list.push({ id: `${cx},${cz}:${i}`, type: 'cactus', x, z, y: surface(x, z), size, turn, r: .38 * size, h: 4.7 * size });
-        else list.push({ id: `${cx},${cz}:${i}`, type: 'rock', x, z, y: surface(x, z), size: size * .7, turn, r: 0, h: .5 * size });
+      const g = gradient(x, z), slope = Math.hypot(g.x, g.z), y = surface(x, z), id = `${cx},${cz}:${i}`;
+      // A second, independent roll for which tree or bush grows here.
+      const pick = hash(Math.round(x * 4), Math.round(z * 4), seed + 111);
+      // Outcrops: crags on steep mountain ground, sandstone ledges on mesa
+      // walls and desert slopes, slabs on steep hillsides. Big, so spaced out.
+      if (slope > .45 && chance < .16 && (mountain > .3 || desert > .3 || slope > .7)) {
+        if (!list.some(p => Math.hypot(p.x - x, p.z - z) < 20)) {
+          const variant = mountain > .3 ? VARIANT.outcrop.granite : desert > .3 ? VARIANT.outcrop.sandstone : VARIANT.outcrop.slab;
+          list.push({ id, type: 'outcrop', variant, x, z, y, size, turn, r: 2.1 * size, h: (variant === VARIANT.outcrop.slab ? 2.2 : 5.5) * size });
+        }
+        continue;
       }
-      else if (chance < mix(.46, .95, smoothstep(.3, .75, woodland)) && mountain < .95) {
-        list.push({ id: `${cx},${cz}:${i}`, type: 'tree', x, z, y: surface(x, z), size, turn, r: .24 * size, h: 6.8 * size });
-      } else list.push({ id: `${cx},${cz}:${i}`, type: 'bush', x, z, y: surface(x, z), size, turn, r: 0, h: size });
+      if (slope > .9) continue;
+      if (list.some(p => Math.hypot(p.x - x, p.z - z) < (p.type === 'outcrop' ? 12 : 7.5))) continue;
+      // Boulders, rocks and scree gather at the foot of slopes, in the ranges
+      // and beneath the mesas.
+      if ((mountain > .15 || desert > .3) && chance < .45 && footOfSlope(x, z, slope) > .35) {
+        if (chance < .16) list.push({ id, type: 'boulder', x, z, y, size: size * 2.3, turn, r: size * 1.5, h: size * 2.6 });
+        else if (mountain > .15 && chance < .32) list.push({ id, type: 'scree', x, z, y, size, turn, r: 0, h: .4 });
+        else list.push({ id, type: 'rock', x, z, y, size, turn, r: 0, h: .65 * size });
+        continue;
+      }
+      // Loose stone on the high, moderately steep mountain slopes.
+      if (mountain > .25 && slope > .3 && y > TREELINE - 50 && chance > .8) { list.push({ id, type: 'scree', x, z, y, size, turn, r: 0, h: .4 }); continue; }
+      // Above the treeline: rocks and boulders, and low junipers below the snow.
+      const alpine = smoothstep(TREELINE - 30, TREELINE + 10, y);
+      if (alpine > .5) {
+        if (chance < (y > SNOW_LINE ? .12 : .3)) list.push({ id, type: chance < .1 ? 'boulder' : 'rock', x, z, y, size: chance < .1 ? size * 2.3 : size, turn, r: chance < .1 ? size * 1.5 : 0, h: chance < .1 ? size * 2.6 : .65 * size });
+        else if (y < SNOW_LINE - 10 && chance < .5) list.push({ id, type: 'bush', variant: VARIANT.bush.juniper, x, z, y, size, turn, r: 0, h: .6 * size });
+        continue;
+      }
+      if (chance < .1 && mountain > .25) list.push({ id, type: 'boulder', x, z, y, size: size * 2.3, turn, r: size * 1.5, h: size * 2.6 });
+      else if (chance < .22) list.push({ id, type: 'rock', x, z, y, size, turn, r: 0, h: .65 * size });
+      else if (desert > .55) {
+        if (chance < .62) list.push({ id, type: 'cactus', x, z, y, size, turn, r: .38 * size, h: 4.7 * size });
+        else if (chance < .76) list.push({ id, type: 'bush', variant: VARIANT.bush.desert, x, z, y, size, turn, r: 0, h: .9 * size });
+        else list.push({ id, type: 'rock', x, z, y, size: size * .7, turn, r: 0, h: .5 * size });
+      }
+      else if (chance < mix(.46, .95, smoothstep(.3, .75, woodland)) * (1 - alpine * 1.6) && mountain < .95) {
+        // Snow-dusted pines on the cold upper slopes, wind-stunted ones at the
+        // treeline, and dead snags where the land dries out.
+        const upper = smoothstep(TREELINE - 80, TREELINE - 40, y);
+        const variant = y > TREELINE - 35 ? VARIANT.tree.stunted : pick < upper * .6 ? VARIANT.tree.snow
+          : (desert > .12 && pick < .35) || pick < .015 ? VARIANT.tree.dead : undefined;
+        const height = variant === VARIANT.tree.stunted ? 3.4 : variant === VARIANT.tree.dead ? 5.8 : 6.8;
+        list.push({ id, type: 'tree', variant, x, z, y, size, turn, r: .24 * size, h: height * size });
+      } else list.push({ id, type: 'bush', variant: desert > .3 ? VARIANT.bush.desert : y > TREELINE - 60 ? VARIANT.bush.juniper : undefined, x, z, y, size, turn, r: 0, h: size });
     }
     for (const f of featuresNear(cx * CHUNK + CHUNK / 2, cz * CHUNK + CHUNK / 2, 100)) {
       if (Math.floor(f.x / CHUNK) !== cx || Math.floor(f.z / CHUNK) !== cz || f.type === 'ramp') continue;
@@ -199,7 +262,7 @@ export function createWorld(seed) {
     }
     return list.filter(p => !brokenProps.has(p.id));
   }
-  return { seed, phase, height, surface, gradient, mountainAt, woodlandAt, desertAt, roadCenter, roadAt, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, seasNear: lakes.seasNear, starterLake: lakes.starter, starterSea: lakes.starterSea, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
+  return { seed, height, surface, groundSurface, gradient, hollow, footOfSlope, mountainAt, woodlandAt, desertAt, roadAt, roadsNear: roads.roadsNear, prepareRoads: (x, z, r, ms) => rivers.prepare(x, z, r + 3 * ROAD_CELL, ms / 2) && roads.prepare(x, z, r, ms / 2), riversNear: rivers.riversNear, riverAt: rivers.riverAt, roadMap: roads.roadMap, alongRoad: roads.along, startHeading: starterRoad ? roads.along(starterRoad, 0).heading : 0, props, featuresNear, rampLift, rampAt, reserved, starterRamp, twistRamp, waterAt, lakeAt: lakes.lakeAt, lakesNear: lakes.near, seasNear: lakes.seasNear, starterLake: lakes.starter, starterSea: lakes.starterSea, brokenProps, breakProp, drainBreakEvents: () => breakEvents.splice(0) };
 }
 
 export function featureLocal(feature, x, z) {
@@ -211,11 +274,12 @@ export function featurePoint(feature, across, along) {
   return { x: feature.x + across * c + along * s, z: feature.z - across * s + along * c };
 }
 
-export function groundAt(world, x, z, heading) {
+// y: the car's height, so a boat beneath a bridge isn't lifted onto its deck.
+export function groundAt(world, x, z, heading, y) {
   const fx = Math.sin(heading), fz = Math.cos(heading), rx = Math.cos(heading), rz = -Math.sin(heading);
-  const f = world.surface(x + fx * 1.36, z + fz * 1.36), b = world.surface(x - fx * 1.36, z - fz * 1.36);
-  const l = world.surface(x + rx * .96, z + rz * .96), r = world.surface(x - rx * .96, z - rz * .96);
-  return { y: Math.max(world.surface(x, z), (f + b + l + r) / 4) + .06, pitch: -Math.atan((f - b) / 2.72), roll: Math.atan((l - r) / 1.92) };
+  const f = world.surface(x + fx * 1.36, z + fz * 1.36, y), b = world.surface(x - fx * 1.36, z - fz * 1.36, y);
+  const l = world.surface(x + rx * .96, z + rz * .96, y), r = world.surface(x - rx * .96, z - rz * .96, y);
+  return { y: Math.max(world.surface(x, z, y), (f + b + l + r) / 4) + .06, pitch: -Math.atan((f - b) / 2.72), roll: Math.atan((l - r) / 1.92) };
 }
 export function createVehicle(world, x = 0, z = 0, heading = 0) {
   const g = groundAt(world, x, z, heading);
@@ -278,9 +342,17 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   car.onRoad = roadDistance < ROAD_HALF;
   const highway = 1 - smoothstep(ROAD_HALF - 1, ROAD_HALF + 3, roadDistance);
   const authority = car.grounded ? 1 : .16;
+  // Slopes: climbing lowers the top speed (the engine runs out of power), and
+  // on faces steeper than about 40° the tyres lose their grip altogether, so
+  // the car slides back rather than racing up a mountainside.
+  const slope = car.grounded ? world.gradient(car.x, car.z) : { x: 0, z: 0 }, rise = slope.x * fx + slope.z * fz;
+  const climbing = car.grounded ? smoothstep(.15, .7, rise * Math.sign(forward || throttle || 1)) : 0;
+  const power = 1 - .6 * climbing;
   let acceleration = 0;
-  if (throttle > 0) acceleration = throttle * (forward < -.5 ? 45 : 34 * (1 - smoothstep(mix(56, 72, highway), mix(72, 89.5, highway), forward)));
+  if (throttle > 0) acceleration = throttle * (forward < -.5 ? 45 : 34 * (1 - smoothstep(mix(56, 72, highway) * power, mix(72, 89.5, highway) * power, forward)));
   if (throttle < 0) acceleration = -throttle * (forward > .5 ? -55 : -18 * (1 - smoothstep(10, 16, -forward)));
+  const uphillPush = rise * Math.sign(acceleration);
+  if (car.grounded && uphillPush > 0) acceleration *= 1 - .9 * smoothstep(.5, .95, uphillPush);
   car.vx += fx * acceleration * authority * dt; car.vz += fz * acceleration * authority * dt;
   const targetSteer = controlAxis(input.steer, input.left, input.right);
   car.steer = mix(car.steer, targetSteer, 1 - Math.exp(-10 * dt));
@@ -292,9 +364,10 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   const drag = Math.exp(-(car.grounded ? brake ? 1.6 : car.onRoad ? .11 : .19 : .015) * dt);
   car.vx *= drag; car.vz *= drag;
   if (car.grounded) {
-    const g = world.gradient(car.x, car.z);
-    // Hill hold at rest; the engine comfortably exceeds downhill gravity.
-    if (throttle || speed > .5) { car.vx -= g.x * 8 * dt; car.vz -= g.z * 8 * dt; }
+    const g = slope, steep = 8 + 10 * smoothstep(.4, 1, Math.hypot(g.x, g.z));
+    // Hill hold at rest; on gentle ground the engine comfortably exceeds
+    // downhill gravity, and steep faces pull harder.
+    if (throttle || speed > .5) { car.vx -= g.x * steep * dt; car.vz -= g.z * steep * dt; }
     if (!throttle && Math.hypot(car.vx, car.vz) < .35) { car.vx = 0; car.vz = 0; }
   }
   const horizontal = Math.hypot(car.vx, car.vz);
@@ -303,7 +376,7 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   car.x += car.vx * dt; car.z += car.vz * dt;
   if (!car.grounded) { car.vy -= 22 * dt; car.y += car.vy * dt; car.airtime += dt; car.airDistance += Math.hypot(car.vx, car.vz) * dt; car.bestAir = Math.max(car.bestAir, car.airtime); }
   resolveObstacles(car, obstacles, world);
-  const g = groundAt(world, car.x, car.z, car.heading);
+  const g = groundAt(world, car.x, car.z, car.heading, car.y);
   const ramp = world.rampAt?.(car.x, car.z);
   const rampPosition = ramp && featureLocal(ramp, car.x, car.z);
   const surfaceVy = clamp((g.y - car.groundY) / dt, -32, 32);

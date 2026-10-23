@@ -100,8 +100,9 @@ test('grounded presentation matches support between real desert physics ticks', 
   }
   assert.ok(checked > 500);
   // Cars now leave rounded crests instead of clinging to them, which removes
-  // the largest mismatches from grounded pairs; a measurable one remains.
-  assert.ok(uncorrectedError > .005, 'fixture reproduces the original contact-height mismatch');
+  // the largest mismatches from grounded pairs, and the land is smoother
+  // than it was; a measurable one (a few millimetres) remains.
+  assert.ok(uncorrectedError > .002, `fixture reproduces the original contact-height mismatch (${uncorrectedError} m)`);
 });
 
 test('launch, landing and transformation intervals retain their interpolated flight height', () => {

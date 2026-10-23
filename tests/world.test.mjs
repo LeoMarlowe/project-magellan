@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWorld, createVehicle, stepVehicle, recoverVehicle, resolveObstacles, groundAt, featurePoint, featureLocal, FIXED_DT, CHUNK, GRID, SPEED_LIMIT } from '../world.mjs';
+import { createWorld, createVehicle, stepVehicle, recoverVehicle, resolveObstacles, groundAt, featurePoint, featureLocal, FIXED_DT, CHUNK, GRID, SPEED_LIMIT, VARIANT } from '../world.mjs';
+import { SNOW_LINE } from '../landforms.mjs';
 const flat = { surface: () => 0, gradient: () => ({ x: 0, z: 0 }), roadAt: (x, z) => ({ d: 0, x, z }), props: () => [] };
 function advance(car, input, world, seconds, obstacles = []) { for (let t = 0; t < Math.round(seconds / FIXED_DT); t++) stepVehicle(car, input, world, obstacles); }
 
@@ -23,17 +24,50 @@ test('terrain agrees with the rendered triangle grid and has no chunk discontinu
     assert.ok(Math.abs(world.surface(x - .0001, z) - world.surface(x + .0001, z)) < .001);
   }
 });
-test('landforms remain traversable across seeds and have no artificial spawn walls', () => {
+test('landforms stay mostly drivable across seeds, with real cliffs, and no artificial spawn walls', () => {
   let maxSlope = 0;
   for (const seed of [1, 77, 12345, 483921, 999999, 82930]) {
     const world = createWorld(seed);
+    let samples = 0, steep = 0;
     for (let x = -2400; x < 2400; x += 73) for (let z = -2400; z < 2400; z += 79) {
-      const g = world.gradient(x, z); maxSlope = Math.max(maxSlope, Math.hypot(g.x, g.z));
+      const g = world.gradient(x, z), slope = Math.hypot(g.x, g.z);
+      maxSlope = Math.max(maxSlope, slope); samples++; if (slope > 1) steep++;
     }
+    // Mesa walls and mountain crags are steeper than 45°, but only in places.
+    assert.ok(steep / samples < .05, `seed ${seed}: ${(steep / samples * 100).toFixed(1)}% of the ground is steeper than 45°`);
     const h = world.height(0, 0);
     assert.ok(Math.abs(world.height(1, 0) - h) < 1.1);
+    // Open plains around the start.
+    for (const [x, z] of [[300, 0], [0, 300], [-300, 0], [0, -300]]) assert.ok(world.mountainAt(x, z) === 0, `seed ${seed}: plains at the start`);
   }
-  assert.ok(maxSlope > 1 && maxSlope < 2, `challenging but climbable maximum sampled slope ${maxSlope}`);
+  assert.ok(maxSlope > 1.5, `cliffs exist: steepest sampled slope ${maxSlope}`);
+});
+
+test('mountain ranges rise to snowy peaks a few hundred metres high, away from the start', () => {
+  for (const seed of [3, 12345]) {
+    const world = createWorld(seed);
+    let peak = -Infinity, snowy = 0, mountains = 0, samples = 0;
+    for (let x = -6000; x <= 6000; x += 120) for (let z = -6000; z <= 6000; z += 120) {
+      const h = world.height(Math.round(x / 4) * 4, Math.round(z / 4) * 4); samples++;
+      peak = Math.max(peak, h); if (h > SNOW_LINE) snowy++; if (world.mountainAt(x, z) > .5) mountains++;
+    }
+    assert.ok(peak > 300 && peak < 450, `seed ${seed}: peak ${peak} m, under the thin air`);
+    assert.ok(snowy > 0 && snowy / samples < .05, `seed ${seed}: snow on the peaks only (${snowy})`);
+    assert.ok(mountains / samples > .05 && mountains / samples < .35, `seed ${seed}: ranges cover ${(mountains / samples * 100).toFixed(0)}%`);
+  }
+});
+
+test('steep climbs slow the car, and faces steeper than about 40 degrees cannot be climbed', () => {
+  const top = grade => {
+    const slope = { ...flat, roadAt: () => ({ d: 20 }), surface: (x, z) => z * grade, gradient: () => ({ x: 0, z: grade }) };
+    const car = createVehicle(slope); let best = 0;
+    for (let i = 0; i < 2400; i++) { stepVehicle(car, { up: true }, slope, []); best = Math.max(best, car.vz); }
+    return { best: best * 3.6, final: car.vz * 3.6 };
+  };
+  const level = top(0).best, gentle = top(.15).best, steep = top(.5).best, wall = top(1);
+  assert.ok(gentle > level * .95, `a gentle grade barely slows the car: ${gentle}`);
+  assert.ok(steep < level * .7 && steep > 80, `a 27° climb is slow but possible: ${steep}`);
+  assert.ok(wall.best < 30 && wall.final < 0, 'a 45° face cannot be climbed: the car slides back');
 });
 test('richer scenery leaves roads and ramp approaches clear and stays deterministic', () => {
   const world = createWorld(483921); let count = 0;
@@ -154,7 +188,7 @@ test('sand regions are continuous, repeatable, and absent above the snow line', 
     assert.ok(Math.abs(amount - world.desertAt(x + .001, z)) < .001);
     if (amount > .9) desert++;
     if (amount < .1) grass++;
-    if (world.height(x, z) >= 117) { snow++; assert.equal(amount, 0); }
+    if (world.height(x, z) >= SNOW_LINE) { snow++; assert.equal(amount, 0); }
   }
   assert.ok(desert > 100 && grass > 100 && snow > 0, 'all three regions coexist');
 });
@@ -171,7 +205,8 @@ test('cacti grow on sand, preserve clear routes, and replace grassland vegetatio
         assert.ok(world.roadAt(prop.x, prop.z).d >= 12 && !world.reserved(prop.x, prop.z));
         assert.ok(prop.r > 0 && prop.h > 0);
       }
-      if (world.desertAt(prop.x, prop.z) > .55) assert.ok(!['tree', 'bush'].includes(prop.type));
+      // On sand: no trees, and only dry desert scrub for bushes.
+      if (world.desertAt(prop.x, prop.z) > .55) assert.ok(prop.type !== 'tree' && (prop.type !== 'bush' || prop.variant === VARIANT.bush.desert), `${prop.type} ${prop.variant} on sand`);
     }
   }
   assert.ok(cacti > 100);

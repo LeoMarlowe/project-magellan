@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { weatherAt, regionWeights, precipitationChance, PRECIPITATION, CLOUDINESS, WEATHER_CELL, WEATHER_AREA } from '../weather.mjs';
 import { createWorld } from '../world.mjs';
+import { SNOW_LINE } from '../landforms.mjs';
 
 // A world that is one kind of region everywhere.
 const region = ({ height = 40, desert = 0, woods = 0 }) => ({ seed: 3, height: () => height, desertAt: () => desert, woodlandAt: () => woods });
-const regions = { snow: region({ height: 170 }), desert: region({ desert: 1 }), woods: region({ woods: 1 }), meadow: region({}) };
+const regions = { snow: region({ height: SNOW_LINE + 40 }), desert: region({ desert: 1 }), woods: region({ woods: 1 }), meadow: region({}) };
 function share(world, samples = 6000) {
   const kinds = { clear: 0, rain: 0, snow: 0 };
   for (let i = 0; i < samples; i++) kinds[weatherAt(world, (i % 41) * WEATHER_AREA, Math.floor(i / 41) * WEATHER_AREA, i * WEATHER_CELL).kind]++;

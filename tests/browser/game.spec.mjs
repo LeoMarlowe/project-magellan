@@ -39,7 +39,7 @@ test('deep water transforms the Blender car, floats with a wake, and reverses on
   await expect.poll(async () => (await snapshot(page)).vehicle.transform, { timeout: 90000 }).toBe(0);
   await page.keyboard.up('KeyW');
   const shore = await snapshot(page);
-  expect(shore.vehicle.boatMode).toBe(false); expect(shore.vehicle.boatDistance).toBeGreaterThan(150);
+  expect(shore.vehicle.boatMode).toBe(false); expect(shore.vehicle.boatDistance).toBeGreaterThan(100); // gently shelving shores
   expect(shore.carAsset.hullSpan).toBeCloseTo(initial.carAsset.hullSpan, 4);
   await testInfo.attach('returned-to-car', { body: await page.screenshot(), contentType: 'image/png' });
   expect(errors).toEqual([]);
@@ -50,7 +50,7 @@ test('Blender cacti and rocks render as seeded instances in a desert world', asy
     const errors = await openGame(page, seed);
     const state = await snapshot(page);
     expect(state.natureAsset.ready).toBe(true); expect(state.natureAsset.error).toBeNull();
-    expect(state.natureAsset.assets).toHaveLength(8);
+    expect(state.natureAsset.assets).toHaveLength(18);
     expect(state.natureAsset.instances[kind]).toBeGreaterThan(10);
     expect(state.natureAsset.instances.rock).toBeGreaterThan(0);
     await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
@@ -104,7 +104,7 @@ test('worker loading, actual WebGL rendering, and stationary scenery stay stable
   expect(state.grass.triangles).toBeLessThanOrEqual(175000); // High: 15-triangle tufts within 78 m
   expect(state.loading).toBe(false); expect(state.carDraws).toBeLessThanOrEqual(72); expect(state.farTiles).toBe(81);
   expect(state.natureAsset.ready).toBe(true); expect(state.natureAsset.error).toBeNull();
-  expect(state.natureAsset.assets).toHaveLength(8);
+  expect(state.natureAsset.assets).toHaveLength(18); // every model in the nature library, mountain and desert variants included
   expect(state.natureAsset.instances.tree).toBeGreaterThan(10); expect(state.natureAsset.instances.rock).toBeGreaterThan(0);
   expect(state.metrics.workerBuild.count).toBeGreaterThanOrEqual(162);
   await page.getByRole('button', { name: 'Start exploring', exact: true }).click();

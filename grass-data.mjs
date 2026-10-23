@@ -1,4 +1,5 @@
-import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=physics-16';
+import { CHUNK, GRID, hash, noise, random, smoothstep } from './world.mjs?v=rivers-1';
+import { TREELINE } from './landforms.mjs?v=terrain-1';
 
 // 1.2 m cells; noise clumps decide which are filled, so meadows get thick
 // patches with gaps between them rather than an even sprinkle.
@@ -23,7 +24,7 @@ export function buildGrass(world, cx, cz, ground) {
     const slope = u + v <= 1 ? Math.hypot(b - a, c - a) / GRID : Math.hypot(d - c, d - b) / GRID;
     const plains = (1 - smoothstep(.25, .55, world.mountainAt(px, pz)))
       * (1 - smoothstep(.55, .75, world.woodlandAt(px, pz)))
-      * (1 - smoothstep(.22, .5, slope)) * (1 - smoothstep(90, 110, h));
+      * (1 - smoothstep(.22, .5, slope)) * (1 - smoothstep(TREELINE - 30, TREELINE + 10, h));
     const clump = smoothstep(.3, .72, noise(px * .07, pz * .07, world.seed + 909));
     const density = plains * (.22 + .73 * clump) * (.65 + .35 * noise(px * .045, pz * .045, world.seed + 906));
     if (hash(gx, gz, world.seed + 903) > density || world.desertAt(px, pz, h) > .12) continue;

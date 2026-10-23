@@ -143,7 +143,7 @@ test('touching down below lift-off speed lands: as the car on ground, as the boa
   const car = airborne(), speed = 24;
   Object.assign(car, { vx: Math.sin(car.heading) * speed, vz: Math.cos(car.heading) * speed, vy: -1, airspeed: speed, y: world.surface(car.x, car.z) + .2, climbOut: false });
   [car.qx, car.qy, car.qz, car.qw] = attitudeFromEuler(car.heading, -.05, 0);
-  run(car, {}, .3);
+  run(car, {}, .6); // long enough to meet ground that falls away a little
   assert.equal(car.flying, false); assert.equal(car.flightMode, false); assert.equal(car.grounded, true);
   run(car, {}, FLIGHT_TRANSFORM_SECONDS + .1);
   assert.equal(car.flight, 0, 'the wings fold away');

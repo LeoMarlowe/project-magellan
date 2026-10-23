@@ -2,7 +2,7 @@
 
 **Play it: [project-magellan.pages.dev](https://project-magellan.pages.dev/)**
 
-An endless, procedurally generated world to drive, sail and fly through: meadows, pine country, deserts, snowy ridges, lakes and inland seas, with jump ramps, barrel-roll ramps, camps and lookout towers along the way. Your vehicle, the ATLAS, is an off-road 4×4 that turns into a boat in deep water and unfolds into a plane on demand.
+An endless, procedurally generated world to drive, sail and fly through: meadows, pine country, deserts, snowy ridges, lakes, rivers and inland seas, with jump ramps, barrel-roll ramps, camps and lookout towers along the way. Your vehicle, the ATLAS, is an off-road 4×4 that turns into a boat in deep water and unfolds into a plane on demand.
 
 Every visit generates a new world. Add `?seed=123456` to a link to share or revisit the same one.
 
@@ -101,11 +101,13 @@ The game pauses when the window loses focus. Sound starts muted on your first vi
 
 ## What's in the world
 
-**Terrain and roads.** Continuous rolling terrain with broad foothills, gullies, off-road ridges and snow on the high ground. Roads are painted straight onto the terrain, so they always match what you drive on. Deserts (the Sandlands) form broad low regions with cacti; try `?seed=100003` to start in one.
+**Terrain.** Open plains around the start give way to hill country and long mountain ranges: sharp, rugged ridgelines with peaks around 350–400 m, crags on the upper slopes, and snow on the tops (THE PEAKS). Rock shows through on steep faces (banded granite in the ranges, layered red sandstone in the desert), loose scree lies on the high slopes, and grass turns to alpine meadow above the treeline. Snow lies lower on shady slopes and slides off the steepest faces. Deserts (the Sandlands) are broad, winding regions with wind-shaped dunes on the flats and flat-topped mesas with cliff walls in the desert hills; try `?seed=100003` to start in one.
+
+**Roads.** A network of roads links waypoints about 1.4 km apart, each on the flattest open ground in its cell, and is routed over the land rather than straight across it: roads wind along valleys and around hills, keep clear of mountains and water, and never climb more than 11%. The land is cut and filled to each road's smooth profile, so it runs through cuttings over rises and on embankments across dips; where there would be no way through without a long detour or a deep cutting, there is no road. Where a road crosses a river it does so on a bridge (a concrete deck with railings and piers, about 3 m above the water), reached by long rounded approaches you can take at full speed, and boats pass underneath. The first road runs north from the start. Markings are painted straight onto the terrain, so they always match what you drive on, and white posts line the verges.
 
 **Ramps.** Orange ramps launch you automatically; Space is optional. The first is about 70 m ahead, just right of the starting road. Purple ramps twist and throw you into a left- or right-handed barrel roll; the first is about 225 m ahead on the other side of the road. The minimap shows orange and purple triangles for ramps and pale squares for camps and lookouts, and the HUD points to the nearest ramp and tracks your airtime and best jump.
 
-**Water and the boat.** Small ponds sit on an 840 m grid, and inland seas 1–1.6 km across sit on a sparse 4 km grid (the first is about 1 km from spawn). Drive into water deeper than 0.9 m and the ATLAS becomes a boat over 2.4 seconds: the body splits onto planing hulls, the wheels fold away and water jets deploy. Drive back into water shallower than 0.4 m to return to wheels. The water has clear turquoise shallows, reflections of the real sky, sun glitter, shoreline foam, caustics on the lake bed, and boat wakes.
+**Water and the boat.** Small ponds sit on an 840 m grid, and inland seas 1–1.6 km across sit on a sparse 4 km grid (the first is about 1 km from spawn). Each sea is fed by one to three rivers, 2.5–6 km long, that wind up from its shore into the hills, widening from 5 m at the source to 26 m at the mouth; their ripples drift downstream, and most are deep enough to sail. Drive into water deeper than 0.9 m and the ATLAS becomes a boat over 2.4 seconds: the body splits onto planing hulls, the wheels fold away and water jets deploy. Drive back into water shallower than 0.4 m to return to wheels. The water has clear turquoise shallows, reflections of the real sky, sun glitter, shoreline foam, caustics on the lake bed, and boat wakes.
 
 **Flying.** Press F from the car, the boat, or mid-jump. Over 1.6 seconds the wings telescope out of the doors (7.5 m span), tail booms extend and a propeller pushes out through the grille. On the ground or water the plane taxis and lifts off at about 115 km/h. A jump with the wings half out turns into a glide. It's a real physics model: lift, drag, stalls, a ceiling near 650 m, and a top speed of about 340 km/h. Touch down below flying speed and you land as the car (or as the boat on deep water). Wingtips that touch the ground end the flight, and the wings smash trees and rocks they hit. See [Flight model](#flight-model) for the details.
 
@@ -122,7 +124,7 @@ The game pauses when the window loses focus. Sound starts muted on your first vi
 
 Cloud cover follows the region too: desert skies are nearly clear, meadows about a third cloudy, pine woods half and snowfields mostly grey. The cover wanders over a few minutes, and clouds gather about half a minute before rain or snow arrives. While it rains or snows, the sky closes into one unbroken overcast down to the horizon. Clouds drift with the wind and slowly change shape, and the cloud banks you can fly through drift too, filling in and thinning out with the cover. Weather changes every couple of minutes per 2 km area and builds and clears over about 20 seconds. Bad weather greys the sky, clouds and water, dims the sun and closes in the fog, and the region label adds · RAIN or · SNOW. `?weather=rain|snow|clear` forces it.
 
-**Scenery and destruction.** Pines, shrubs, cacti, rocks, boulders, roadside markers, cabins and lookout towers, all modeled in Blender. Trees, cacti and small rocks shatter if you hit them above 65 km/h (boulders need 94 km/h); trees split into falling sections, and broken props stay broken for the rest of your visit. Clearances keep scenery off roads and ramp approaches.
+**Scenery and destruction.** Pines, shrubs, cacti, rocks, boulders, roadside markers, cabins and lookout towers, all modeled in Blender. The scenery follows the land: snow-dusted pines on the cold upper slopes, small wind-bent pines at the treeline, low junipers and boulders above it, dead snags and dry scrub at the desert's edge, granite crags on steep mountain ground, sandstone ledges on the mesas, and scree on the high slopes. Outcrops are solid and never break. Trees, cacti and small rocks shatter if you hit them above 65 km/h (boulders need 94 km/h); trees split into falling sections, and broken props stay broken for the rest of your visit. Clearances keep scenery off roads and ramp approaches.
 
 **Sound.** All synthesized in the browser, with no audio files: a V8 engine with gears and exhaust pops, boat jets, a propeller, wind, tyre roar and squeal, rain, transformation motors, and impacts, splashes and breaking scenery placed left or right of the camera.
 
@@ -175,11 +177,11 @@ Test modes keep their trip records separate from normal play. The `seed=3` world
 | --- | --- |
 | Page and UI | `index.html`, `style.css` (menus, HUD, touch controls) |
 | Main loop | `game.mjs`: rendering, streaming, vehicle animation, audio, input |
-| World | `world.mjs` (terrain, roads, props, vehicle physics), `terrain.mjs`, `lakes.mjs`, `streaming-layout.mjs`, `world-worker.mjs` (background generation) |
+| World | `world.mjs` (terrain, props, vehicle physics), `landforms.mjs` (plains, hills, mountain ranges, dunes, mesas), `noise.mjs`, `terrain.mjs` (terrain meshes and colours), `roads.mjs` (road network, profiles, bridges, road maps), `rivers.mjs`, `lakes.mjs`, `streaming-layout.mjs`, `world-worker.mjs` (background generation) |
 | Vehicle | `vehicle-model.mjs` (loads the glTF), `vehicle-presentation.mjs` (smooth motion between physics steps), `amphibious-motion.mjs` (boat), `flight-motion.mjs` (plane), `controls.mjs` (steering response) |
 | Water | `water-data.mjs` (meshes, built in the worker), `water.mjs` (shader and wakes) |
 | Weather and sky | `daylight.mjs` (the clock, sun and moon paths, light colours), `sky.mjs` (sky dome, sun, moon, stars, clouds), `weather.mjs` (regional odds), `weather-effects.mjs` (rain, snow, fog colour), `clouds.mjs` (cloud banks) |
-| Scenery | `scenery.mjs` (ramps, cabins, lookouts), `nature-models.mjs`, `grass-data.mjs`, `grass.mjs` |
+| Scenery | `scenery.mjs` (ramps, cabins, lookouts), `bridge-data.mjs` (bridge meshes, built in the worker), `nature-models.mjs`, `grass-data.mjs`, `grass.mjs` |
 | Effects | `tree-breakage.mjs`, `debris.mjs`, `shadow-fade.mjs`, `camera-motion.mjs` |
 | Sound | `vehicle-audio.mjs`, `break-audio.mjs` |
 | Tools | `quality.mjs` (presets and Auto), `perf-meter.mjs`, `profiling.mjs` |
@@ -198,7 +200,7 @@ On macOS the browser tests render on the GPU through ANGLE Metal and take under 
 
 The tests cover, among other things:
 
-- **Terrain and world:** terrain continuity, seeded regeneration, scenery clearances and challenging slopes.
+- **Terrain and world:** terrain continuity, seeded regeneration, mountain ranges and snow, scenery clearances, cliffs, and slope limits.
 - **Driving:** jumps and ramp launches, top speed, drift and collisions.
 - **Boat and flight:** transformations, buoyancy, flight physics, take-offs and landings.
 - **Weather and grass:** weather odds, and grass placement and budgets.
@@ -249,7 +251,7 @@ The rig uses X right, Y up and Z forward:
 - **Propeller:** `Propeller` is left unanimated so the game can spin it.
 - **Dimensions:** wheel radius 0.57 m, wheelbase 2.74 m, track 2.08 m.
 
-**The scenery.** `assets/nature/endless-nature.blend` holds eight models: two pines, two cacti, two rock clusters and two boulders. Keep the eight named roots and their `fragment` assignments when editing. Exact triangle counts are in `endless-nature.json`.
+**The scenery.** `assets/nature/endless-nature.blend` holds eighteen models: five trees (alpine, windswept and snow-dusted pines, a stunted treeline pine and a dead snag), two cacti, two rock clusters, two boulders, three bushes (meadow, desert scrub and juniper), three rock outcrops (granite crag, sandstone ledge, tilted slab) and a scree field. Keep the named roots and the trees' six `fragment` sections (so they can break apart) when editing. Exact triangle counts are in `endless-nature.json`.
 
 ```sh
 # Rebuild all scenery models and the preview
@@ -267,6 +269,8 @@ To update the bundled Three.js deliberately, run `npm run vendor` and commit the
 
 - **Three terrain tiers.** Around the car stream 81 detailed 96 m chunks, then 384 m coarse tiles, then 1,536 m horizon tiles reaching about 5 km for the view from the air. Each tier cuts holes only where the tier inside it has loaded, so there are no gaps while tiles stream in, and the tiers blend into each other over set distances, so they meet without cracks.
 - **Background loading.** A module worker builds terrain, props, grass and water ahead of time. The main thread installs results within a 4 ms budget per frame, loading tiles ahead of a fast car or plane first.
+- **Routing ahead.** Roads are routed (A* on a 48 m lattice, then rounded into curves and given a height profile) and rivers traced up to 3 km ahead of the car, about 1.5 ms of work per frame in small slices, so physics and the minimap never wait for them. The worker works out the same network for itself.
+- **Roads on the ground.** Each terrain tile carries a small road map: the distance to the nearest road, the dash pattern along it, and the distance to the next road over. The ground shader paints asphalt, edge lines and centre dashes from it, crisp at any distance. Bridges carry their own markings; far tiles, which draw no bridges, paint the road across instead.
 - **Fog.** As you climb, fog recedes from 350–1,450 m to 1,250–4,350 m. Its colour is always the sky's horizon colour after tone mapping, so distant terrain fades into the sky instead of leaving a band on the skyline.
 - **Distant detail.** Far tiles carry simple stand-ins for every tree, cactus, rock, boulder and bush, at the same seeded spots, fitted to the real model's size and coloured like it. Each prop swaps between its real model and its stand-in at its own distance (somewhere in 260–340 m). Both are always opaque, so nothing turns see-through, and the scattered swap points leave no visible line. Ramps, cabins and lookouts work the same way: each far tile has one merged stand-in mesh built from the real landmark geometry, and each landmark swaps as a whole at its own distance (300–360 m). On Low there are no stand-ins, and real props fade out over 220–350 m instead. Every lake and sea out to 4.6 km is one worker-built water mesh, replaced by detailed patches within about 1 km. All water rides just above whichever terrain tier is drawn beneath it, so coarse terrain never buries a pond.
 - **Clouds.** Cloud puffs fade in with distance and are fully transparent before any new patch of sky can appear, so they never pop in.
@@ -274,6 +278,7 @@ To update the bundled Three.js deliberately, run `npm run vendor` and commit the
 ### Driving physics
 
 - **Fixed steps.** Physics runs at a fixed 120 Hz: acceleration, hill climbing, drift, airtime, landings and collisions. Top speed is about 301 km/h on level road, 236 km/h off-road and 331 km/h downhill.
+- **Slopes.** Climbing saps the engine: off-road the car still makes about 210 km/h up a 17° slope, 140 km/h up 27° and 90 km/h up 35°. Faces steeper than about 40° can't be climbed at all; the tyres lose their grip and the car slides back.
 - **Jumps.** Jumps use a real impulse with gravity, buffered input and a short grace period after leaving a crest. Holding Space doesn't bounce the car.
 - **Crests and ramps.** The ground can push the car up but never pull it down. When the surface falls away faster than gravity, the car follows its own ballistic path, so rounded crests and ramp backs launch like sharp edges while ordinary road bumps never add up to a lift-off.
 - **Attitude in the air.** A car leaving slanted ground keeps its tilt, drifting slowly toward upright, and settles onto the surface when it lands.

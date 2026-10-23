@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { waterWave, lakeExtent } from './lakes.mjs?v=physics-16';
+import { waterWave, lakeExtent } from './lakes.mjs?v=rivers-1';
 
 // A small tileable wave texture, generated once (no download): R/G hold the
 // surface slope from a sum of periodic waves, B a soft noise used to break up
@@ -76,6 +76,9 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
       uSunDir: { value: (light.sunDirection ?? new THREE.Vector3(-.52, .8, .36)).clone().normalize() }, uSunColor: { value: new THREE.Color(light.sunColor ?? '#fff0d2') }, uCloudTone: { value: new THREE.Color(.87, .9, .87) }, uLight: ambient },
     vertexShader: `attribute float bedDepth; attribute vec2 lakeUV;
       uniform float uTime; varying vec3 vWorld; varying float vDepth; varying vec2 vLake;
+      #ifdef RIVER
+      attribute vec3 river; varying vec3 vRiver;
+      #endif
       attribute vec2 groundY; uniform vec2 uStreamCenter;
       void main(){
         vec3 p=position;
@@ -87,15 +90,28 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         float d=distance(p.xz,uStreamCenter);
         p.y=mix(mix(p.y,max(p.y,groundY.x+.3),smoothstep(220.,360.,d)),max(p.y,groundY.y+.3),smoothstep(1150.,1450.,d));
         vWorld=p;vDepth=bedDepth;vLake=lakeUV;
+        #ifdef RIVER
+        vRiver=river;
+        #endif
         gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);
       }`,
-    fragmentShader: `uniform float uTime,uFogNear,uFogFar,uDetail; uniform sampler2D uWaves;
+    fragmentShader: `uniform float uTime,uFogNear,uFogFar,uDetail; uniform sampler2D uWaves; uniform vec2 uStreamCenter;
+      #ifdef RIVER
+      varying vec3 vRiver;
+      #endif
       uniform vec3 uShallow,uDeep,uSky,uSkyTop,uSkyBottom,uSunDir,uSunColor,uCloudTone,uLight;
       varying vec3 vWorld; varying float vDepth; varying vec2 vLake;
       ${skyFunctions}
       void main(){
         if(vDepth<.015||length(vLake)>1.02)discard;
-        vec2 p=vWorld.xz;
+        vec2 p=vWorld.xz, drift=vec2(0.);
+        #ifdef RIVER
+        // Rivers come in two tiers, near chunks and far tiles, switching at a
+        // fixed distance so they never overlap; their ripples drift downstream.
+        float tierEdge=distance(p,uStreamCenter)-370.;
+        if(vRiver.z<.5?tierEdge>0.:tierEdge<=0.)discard;
+        drift=vRiver.xy*uTime;
+        #endif
         float far=distance(cameraPosition,vWorld);
         // A broad swell plus two drifting wave-texture layers. Fine detail
         // fades with distance (mipmaps do the filtering), so wide water from
@@ -104,10 +120,10 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         vec2 slope=vec2(-.045*cos(a)+.028*cos(b),-.03*cos(a)-.06*cos(b))*(1.-smoothstep(80.,380.,far)*.85);
         float near=1.-smoothstep(60.,480.,far), foamNoise=.5;
         if(far<900.){
-          vec4 w1=texture2D(uWaves,p*(1./34.)+uTime*vec2(.017,.011));
+          vec4 w1=texture2D(uWaves,(p-drift)*(1./34.)+uTime*vec2(.017,.011));
           slope+=(w1.xy*2.-1.)*.16*(.3+.7*near); foamNoise=w1.z;
           if(uDetail>.5){
-            vec4 w2=texture2D(uWaves,mat2(.8,-.6,.6,.8)*p*(1./11.)+uTime*vec2(-.031,.024));
+            vec4 w2=texture2D(uWaves,mat2(.8,-.6,.6,.8)*(p-drift)*(1./11.)+uTime*vec2(-.031,.024));
             slope+=(w2.xy*2.-1.)*.09*near; foamNoise=mix(foamNoise,w2.z,.5);
           }
         }
@@ -138,6 +154,17 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
         #include <colorspace_fragment>
       }`
   });
+  // Rivers share the lakes' look and settings (one set of uniforms), with
+  // ripples that drift downstream.
+  const riverMaterial = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, side: THREE.FrontSide, uniforms: material.uniforms,
+    vertexShader: '#define RIVER\n' + material.vertexShader, fragmentShader: '#define RIVER\n' + material.fragmentShader });
+  function riverMesh(data) {
+    const geometry = new THREE.BufferGeometry();
+    for (const [name, size] of [['position', 3], ['bedDepth', 1], ['lakeUV', 2], ['groundY', 2], ['river', 3]]) geometry.setAttribute(name, new THREE.BufferAttribute(data[name], size));
+    geometry.setIndex(new THREE.BufferAttribute(data.index, 1)); geometry.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geometry, riverMaterial); mesh.name = 'River'; mesh.renderOrder = 1;
+    return mesh;
+  }
   function install(lake, data) {
     // The stream coordinator also rejects previous-world generations. This
     // guards late results for lakes left behind, and duplicate results.
@@ -298,6 +325,6 @@ export function createWater(scene, fog = { uFogNear: { value: 350 }, uFogFar: { 
     if (clouds) u.uCloudTone.value.copy(clouds);
   }
   const setDetail = on => { detail.value = on ? 1 : 0; causticCheck = 0; if (!on) caustic.value.z = 0; };
-  return { sync, install, update, clear, installDistant, setDetail, setSky, drainSplashes: () => splashes.splice(0), causticUniforms: { uTime: time, uCausticLake: caustic }, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
+  return { sync, install, update, clear, installDistant, setDetail, setSky, riverMesh, riverWarmup: new THREE.Mesh(new THREE.BufferGeometry(), riverMaterial), drainSplashes: () => splashes.splice(0), causticUniforms: { uTime: time, uCausticLake: caustic }, get distantCount() { return distantCount; }, wants: id => wanted.has(id), get ready() { return patches.size === wanted.size; },
     get count() { return patches.size; }, get wakeCount() { return ripples.length; } };
 }

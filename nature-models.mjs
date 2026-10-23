@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/loaders/GLTFLoader.js';
 
-export const NATURE_URL = new URL('./assets/nature/endless-nature.glb?v=nature-1', import.meta.url);
+export const NATURE_URL = new URL('./assets/nature/endless-nature.glb?v=nature-2', import.meta.url);
 const names = {
-  tree: ['Pine_Alpine', 'Pine_Windswept'],
+  tree: ['Pine_Alpine', 'Pine_Windswept', 'Pine_Snow', 'Pine_Stunted', 'Tree_Dead'],
   cactus: ['Cactus_Saguaro', 'Cactus_Forked'],
   rock: ['Rock_Granite', 'Rock_Shale'],
   boulder: ['Boulder_Granite', 'Boulder_Sandstone'],
+  bush: ['Bush_Meadow', 'Bush_Desert', 'Bush_Juniper'],
+  outcrop: ['Outcrop_Granite', 'Outcrop_Sandstone', 'Outcrop_Slab'],
+  scree: ['Scree_Field'],
 };
+// The world picks the special trees, bushes and outcrops by place
+// (prop.variant, numbered as in world.mjs VARIANT and in the order above).
+// Without one, a prop's position picks among the everyday variants.
+const everyday = { tree: 2, bush: 1 };
 
 function mergeParts(parts) {
   const count = parts.reduce((n, g) => n + g.attributes.position.count, 0);
@@ -70,8 +77,10 @@ export function assembleNatureLibrary(scene) {
   });
   function variantFor(prop) {
     const count = variants[prop.type]?.length ?? 1;
+    if (prop.variant !== undefined && prop.variant >= 0) return Math.min(prop.variant, count - 1);
+    const pool = Math.min(count, everyday[prop.type] ?? count);
     const seed = Math.imul(Math.round(prop.x * 8), 73856093) ^ Math.imul(Math.round(prop.z * 8), 19349663);
-    return (seed >>> 0) % count;
+    return (seed >>> 0) % pool;
   }
   return { variants, treeSources, material, stats, variantFor };
 }

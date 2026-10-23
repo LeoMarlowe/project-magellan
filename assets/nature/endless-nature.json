@@ -56,6 +56,76 @@
       "variant": 1,
       "triangles": 172,
       "parts": 1
+    },
+    {
+      "name": "Pine_Snow",
+      "kind": "tree",
+      "variant": 2,
+      "triangles": 1602,
+      "parts": 6
+    },
+    {
+      "name": "Pine_Stunted",
+      "kind": "tree",
+      "variant": 3,
+      "triangles": 930,
+      "parts": 6
+    },
+    {
+      "name": "Tree_Dead",
+      "kind": "tree",
+      "variant": 4,
+      "triangles": 466,
+      "parts": 6
+    },
+    {
+      "name": "Bush_Meadow",
+      "kind": "bush",
+      "variant": 0,
+      "triangles": 140,
+      "parts": 1
+    },
+    {
+      "name": "Bush_Desert",
+      "kind": "bush",
+      "variant": 1,
+      "triangles": 320,
+      "parts": 1
+    },
+    {
+      "name": "Bush_Juniper",
+      "kind": "bush",
+      "variant": 2,
+      "triangles": 100,
+      "parts": 1
+    },
+    {
+      "name": "Outcrop_Granite",
+      "kind": "outcrop",
+      "variant": 0,
+      "triangles": 344,
+      "parts": 1
+    },
+    {
+      "name": "Outcrop_Sandstone",
+      "kind": "outcrop",
+      "variant": 1,
+      "triangles": 516,
+      "parts": 1
+    },
+    {
+      "name": "Outcrop_Slab",
+      "kind": "outcrop",
+      "variant": 2,
+      "triangles": 172,
+      "parts": 1
+    },
+    {
+      "name": "Scree_Field",
+      "kind": "scree",
+      "variant": 0,
+      "triangles": 240,
+      "parts": 1
     }
   ],
   "axes": "X right, Y up, Z forward; each asset root is its ground origin",

@@ -11,26 +11,30 @@ const bytes = await readFile(new URL('../assets/nature/endless-nature.glb', impo
 const { scene } = await new GLTFLoader().parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), '');
 const library = assembleNatureLibrary(scene);
 
-test('Blender scenery contains eight colored, correctly scaled assets with bounded geometry', () => {
+test('Blender scenery contains eighteen colored, correctly scaled assets with bounded geometry', () => {
   const json = JSON.parse(bytes.subarray(20, 20 + bytes.readUInt32LE(12)).toString());
   assert.ok(json.asset.generator.includes('Blender'));
   assert.ok(json.buffers.every(b => !b.uri)); assert.equal(json.images?.length ?? 0, 0);
-  assert.ok(bytes.length < 1024 * 1024);
-  assert.equal(library.stats.length, 8);
+  assert.ok(bytes.length < 1.5 * 1024 * 1024);
+  assert.equal(library.stats.length, 18);
+  const counts = { tree: 5, cactus: 2, rock: 2, boulder: 2, bush: 3, outcrop: 3, scree: 1 };
   for (const [kind, variants] of Object.entries(library.variants)) {
-    assert.equal(variants.length, 2);
-    for (const { geometry, material } of variants) {
+    assert.equal(variants.length, counts[kind], kind);
+    for (const [variant, { geometry, material }] of variants.entries()) {
       assert.equal(material.vertexColors, true); assert.equal(material.transparent, false);
       const { position, normal, color } = geometry.attributes;
       assert.equal(position.count, color.count); assert.equal(normal.count, position.count);
-      assert.ok(position.count / 3 < (kind === 'tree' ? 1700 : kind === 'cactus' ? 1250 : 300));
+      assert.ok(position.count / 3 < (kind === 'tree' ? 1700 : kind === 'cactus' ? 1250 : kind === 'outcrop' ? 600 : 350));
       for (const attribute of [position, normal, color]) assert.ok([...attribute.array].every(Number.isFinite));
       assert.ok([...color.array].every(c => c >= 0 && c <= 1));
       assert.ok(new Set(color.array).size > 6, 'authored color variation survives glTF export');
       const size = geometry.boundingBox.getSize(new THREE.Vector3());
-      assert.ok(geometry.boundingBox.min.y > -.2 && geometry.boundingBox.min.y <= .02, 'origin sits at ground level');
-      assert.ok(size.x < (kind === 'tree' ? 4.3 : 3.1));
-      if (kind === 'tree') assert.ok(size.y > 6.4 && size.y < 6.9);
+      // Outcrops run a metre or more into the ground so they sit into slopes.
+      if (kind === 'outcrop') assert.ok(geometry.boundingBox.min.y < -.8 && geometry.boundingBox.min.y > -2.5, 'outcrops are rooted in the ground');
+      else assert.ok(geometry.boundingBox.min.y > -.2 && geometry.boundingBox.min.y <= .05, 'origin sits at ground level');
+      assert.ok(size.x < (kind === 'tree' ? 4.3 : kind === 'outcrop' || kind === 'scree' ? 8 : 3.1));
+      // Tall pines (alpine, windswept, snow), the stunted treeline pine, the dead snag.
+      if (kind === 'tree') assert.ok(variant === 3 ? size.y > 3 && size.y < 3.8 : variant === 4 ? size.y > 5 && size.y < 6.6 : size.y > 6.3 && size.y < 6.9, `tree ${variant}: ${size.y}`);
       if (kind === 'cactus') assert.ok(size.y > 3.8 && size.y < 4.8);
       if (kind === 'rock') assert.ok(size.y < .8);
       if (kind === 'boulder') assert.ok(size.y > 1.5 && size.y < 2.1);
@@ -56,9 +60,9 @@ test('scenery variants are stable across chunk reloads and templates keep indepe
   a.dispose(); b.dispose();
 });
 
-test('both imported trees retain their complete colored surfaces at impact, with a shared fragment capacity', () => {
+test('every imported tree retains its complete colored surfaces at impact, with a shared fragment capacity', () => {
   const ground = { surface: () => 0 };
-  for (let variant = 0; variant < 2; variant++) {
+  for (let variant = 0; variant < 5; variant++) {
     const scene = new THREE.Scene(), effect = createTreeBreakage(scene, library.treeSources);
     const original = new THREE.Mesh(library.variants.tree[variant].geometry, library.material);
     effect.burst({ x: 0, y: .08, z: 0, turn: 0, size: 1, vx: 0, vz: 83.3, variant });

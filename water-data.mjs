@@ -1,6 +1,6 @@
 // Typed arrays cross the worker boundary by transfer, with no terrain sampling
 // or large mesh-generation loops left on the animation thread.
-import { lakeExtent, lakeRadius } from './lakes.mjs?v=physics-16';
+import { lakeExtent, lakeRadius } from './lakes.mjs?v=rivers-1';
 export function buildWaterData(world, lake, terrain = null) {
   // Irregular sea coasts reach past the nominal radii; cover their full extent.
   const reach = lake.shape.length ? lakeExtent(lake) / Math.max(lake.rx, lake.rz) * 1.06 : 1.03;
@@ -15,7 +15,7 @@ export function buildWaterData(world, lake, terrain = null) {
   for (let iz = 0; iz <= nz; iz++) for (let ix = 0; ix <= nx; ix++) {
     const i = iz * (nx + 1) + ix, x = x0 + ix * step, z = z0 + iz * step;
     position.set([x, lake.level + .012, z], i * 3);
-    bedDepth[i] = lake.level - world.surface(x, z);
+    bedDepth[i] = lake.level - world.groundSurface(x, z);
     // Scaled so that length(lakeUV) = 1 on the (irregular) shoreline.
     const u = (x - lake.x) / lake.rx, v = (z - lake.z) / lake.rz, k = lakeRadius(lake, x, z) / (Math.hypot(u, v) || 1);
     lakeUV.set([u * k, v * k], i * 2);
@@ -43,7 +43,7 @@ export function buildDistantWater(world, terrain, x, z) {
     const base = position.length / 3, start = index.length;
     const vertex = (px, pz, u, v) => {
       position.push(px, lake.level + .012, pz);
-      bedDepth.push(Math.max(.3, lake.level - world.surface(px, pz))); lakeUV.push(u, v);
+      bedDepth.push(Math.max(.3, lake.level - world.groundSurface(px, pz))); lakeUV.push(u, v);
       groundY.push(terrain.coarseSample(px, pz).height, terrain.ultraSample(px, pz).height);
     };
     vertex(lake.x, lake.z, 0, 0);
@@ -63,4 +63,43 @@ export function buildDistantWater(world, terrain, x, z) {
     ranges.push({ id: lake.id, start, count: index.length - start });
   }
   return { ranges, position: new Float32Array(position), bedDepth: new Float32Array(bedDepth), lakeUV: new Float32Array(lakeUV), groundY: new Float32Array(groundY), index: new Uint32Array(index) };
+}
+
+// River water for one terrain tile: a ribbon along each river, level across
+// and falling downstream. Each stretch belongs to the tile its middle lies in,
+// so neighbouring tiles never overlap. tier 0 is a near chunk, 1 a far tile
+// (every stride-th point); the shader shows each tier on its own side of a
+// fixed distance. Vertices beyond the banks have no depth and are discarded,
+// so the water ends where the carved bank rises out of it.
+export function buildRiverWater(world, terrain, x0, z0, size, tier, stride = 1) {
+  const position = [], bedDepth = [], lakeUV = [], groundY = [], river = [], index = [];
+  const ACROSS = [-1, -.55, 0, .55, 1];
+  for (const r of world.riversNear(x0 + size / 2, z0 + size / 2, size)) {
+    let previous = -1;
+    for (let k = 0; k < r.count; k += stride) {
+      const next = Math.min(r.count - 1, k + stride);
+      if (next === k) break;
+      const mx = (r.points[k * 2] + r.points[next * 2]) / 2, mz = (r.points[k * 2 + 1] + r.points[next * 2 + 1]) / 2;
+      if (mx < x0 || mx >= x0 + size || mz < z0 || mz >= z0 + size) { previous = -1; continue; }
+      const dx = r.points[next * 2] - r.points[k * 2], dz = r.points[next * 2 + 1] - r.points[k * 2 + 1], len = Math.hypot(dx, dz) || 1;
+      // A cross-section at each end of the stretch (shared with the previous one).
+      const section = q => {
+        const start = position.length / 3, half = r.width[q] / 2 + 2.5, x = r.points[q * 2], z = r.points[q * 2 + 1];
+        for (const t of ACROSS) {
+          const px = x + dz / len * t * half, pz = z - dx / len * t * half;
+          position.push(px, r.level[q] + .012, pz); bedDepth.push(r.level[q] - world.groundSurface(px, pz)); lakeUV.push(0, 0);
+          groundY.push(terrain.coarseSample(px, pz).height, terrain.ultraSample(px, pz).height);
+          // Downstream at about a metre a second, faster where the river falls.
+          const speed = .9 + Math.min(2, (r.level[q] - r.level[Math.min(r.count - 1, q + 1)]) * 40);
+          river.push(dx / len * speed, dz / len * speed, tier);
+        }
+        return start;
+      };
+      const a = previous >= 0 ? previous : section(k), b = section(next);
+      for (let i = 0; i < ACROSS.length - 1; i++) index.push(a + i, b + i, a + i + 1, a + i + 1, b + i, b + i + 1);
+      previous = b;
+    }
+  }
+  if (!index.length) return null;
+  return { position: new Float32Array(position), bedDepth: new Float32Array(bedDepth), lakeUV: new Float32Array(lakeUV), groundY: new Float32Array(groundY), river: new Float32Array(river), index: new Uint32Array(index) };
 }

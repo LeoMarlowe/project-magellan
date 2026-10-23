@@ -3,7 +3,8 @@
 // and it rains (or snows) when the roll falls under the region's chance. So
 // weather is the same for everyone in an area for a couple of minutes, then
 // moves on; the game eases between states, so nothing switches abruptly.
-import { hash } from './world.mjs?v=physics-16';
+import { hash } from './world.mjs?v=rivers-1';
+import { SNOW_LINE } from './landforms.mjs?v=terrain-1';
 
 export const WEATHER_CELL = 120; // seconds
 export const WEATHER_AREA = 2000; // metres
@@ -23,7 +24,7 @@ const smoothstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b
 // How much of each region a point belongs to (the weights sum to 1). The snow
 // line matches the terrain colouring; sand never lies above it.
 export function regionWeights(world, x, z) {
-  const snow = smoothstep(125, 150, world.height(Math.round(x), Math.round(z)));
+  const snow = smoothstep(SNOW_LINE - 15, SNOW_LINE + 15, world.height(Math.round(x), Math.round(z)));
   const desert = (1 - snow) * world.desertAt(x, z);
   const woods = (1 - snow - desert) * smoothstep(.45, .65, world.woodlandAt(x, z));
   return { snow, desert, woods, meadow: 1 - snow - desert - woods };

@@ -6,6 +6,7 @@ import { createTerrain } from '../terrain.mjs';
 import { buildGrass, MAX_GRASS_PER_CHUNK } from '../grass-data.mjs';
 import { createGrass, CALM } from '../grass.mjs';
 import { qualityLevels } from '../quality.mjs';
+import { SNOW_LINE } from '../landforms.mjs';
 
 test('grass is seeded, bounded and follows terrain triangles while leaving roads, sand and ramps clear', () => {
   let total = 0;
@@ -30,7 +31,7 @@ test('grass is seeded, bounded and follows terrain triangles while leaving roads
 test('grass has no placement in sand, snow or steep terrain', () => {
   const world = createWorld(3), terrain = createTerrain(world), ground = terrain.build(0, 0, CHUNK, 4);
   assert.equal(buildGrass({ ...world, desertAt: () => 1 }, 0, 0, ground).roots.length, 0);
-  const snowy = { position: ground.position.slice() }; for (let i = 1; i < snowy.position.length; i += 3) snowy.position[i] = 150;
+  const snowy = { position: ground.position.slice() }; for (let i = 1; i < snowy.position.length; i += 3) snowy.position[i] = SNOW_LINE;
   assert.equal(buildGrass(world, 0, 0, snowy).roots.length, 0);
   const steep = { position: ground.position.slice() }; for (let i = 0; i < steep.position.length; i += 3) steep.position[i + 1] = steep.position[i] * .6;
   assert.equal(buildGrass(world, 0, 0, steep).roots.length, 0);

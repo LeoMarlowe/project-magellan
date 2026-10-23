@@ -1,4 +1,4 @@
-import { waterWave } from './lakes.mjs?v=physics-16';
+import { waterWave } from './lakes.mjs?v=rivers-1';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const TRANSFORM_SECONDS = 2.4;
 export const BOAT_ENTER_DEPTH = .9;
@@ -40,7 +40,7 @@ export function stepAmphibious(car, input, world, dt, groundAt) {
   if (!throttle && Math.hypot(car.vx, car.vz) < .06) car.vx = car.vz = 0;
   car.x += car.vx * dt; car.z += car.vz * dt;
 
-  const support = groundAt(world, car.x, car.z, car.heading);
+  const support = groundAt(world, car.x, car.z, car.heading, car.y);
   const nextWater = world.waterAt?.(car.x, car.z);
   const level = nextWater?.level ?? water.level;
   const target = Math.max(support.y, level - .52 + waterWave(car.x, car.z, car.time));

@@ -28,19 +28,18 @@ export function lakeRadius(lake, x, z) {
 }
 export function lakeExtent(lake) { return Math.max(lake.rx, lake.rz) * (1 + lake.shape.reduce((sum, [, a]) => sum + a, 0)); }
 
+// baseHeight: the natural land (roads route around the lakes, so lakes never
+// depend on roads); roadAt: lets the shoreline reshaping spare nearby roads.
 export function createLakes(seed, baseHeight, roadAt) {
   const ponds = new Map(), seas = new Map();
-  function rimLevel(lake, roads) {
-    // Keep the water below every natural rim (including nearby roads for
-    // ponds). A basin on a mountainside must not end in a vertical sheet.
+  function rimLevel(lake) {
+    // Keep the water below every natural rim. A basin on a mountainside must
+    // not end in a vertical sheet.
     const samples = lake.shape.length ? 96 : 64;
     for (let i = 0; i < samples; i++) {
       const a = i * Math.PI * 2 / samples, s = shapeAt(lake, Math.atan2(Math.cos(a), Math.sin(a))) * 1.02;
       const px = lake.x + Math.sin(a) * lake.rx * s, pz = lake.z + Math.cos(a) * lake.rz * s;
       lake.level = Math.min(lake.level, baseHeight(px, pz) - 2.5);
-      if (!roads) continue;
-      const road = roadAt(px, pz);
-      if (Math.hypot((road.x - lake.x) / lake.rx, (road.z - lake.z) / lake.rz) < 1.08) lake.level = Math.min(lake.level, baseHeight(road.x, road.z) - 2.5);
     }
   }
   function seaAtCell(cx, cz) {
@@ -59,9 +58,10 @@ export function createLakes(seed, baseHeight, roadAt) {
         rx: starter ? 560 : 420 + hash(cx, cz, seed + 2903) * 230, rz: starter ? 500 : 420 + hash(cx, cz, seed + 2904) * 230,
         level: baseHeight(x, z) - 1.5, depth: 14 + hash(cx, cz, seed + 2911) * 8,
         name: starter ? SEA_NAMES[0] : SEA_NAMES[Math.floor(hash(cx, cz, seed + 2912) * SEA_NAMES.length)] };
-      rimLevel(sea, false);
+      rimLevel(sea);
     }
-    if (seas.size >= 64) seas.delete(seas.keys().next().value);
+    // Rivers look for seas up to 12 km away (about 64 sea cells): keep plenty.
+    if (seas.size >= 512) seas.delete(seas.keys().next().value);
     seas.set(key, sea); return sea;
   }
   // Sea centres stay within ±15% of their cell's middle and reach at most
@@ -71,21 +71,30 @@ export function createLakes(seed, baseHeight, roadAt) {
     const key = `${cx},${cz}`;
     if (ponds.has(key)) return ponds.get(key);
     const starter = cx === 0 && cz === 0;
-    const x = starter ? 180 : cx * spacing + 210 + (hash(cx, cz, seed + 1801) - .5) * 50;
-    const z = starter ? 160 : cz * spacing + 210 + (hash(cx, cz, seed + 1802) - .5) * 50;
+    // Scattered well across their cells, so from the air they never line up
+    // (each still within its own cell's reach, so lookups always find it).
+    const x = starter ? 180 : cx * spacing + 210 + (hash(cx, cz, seed + 1801) - .5) * 320;
+    const z = starter ? 160 : cz * spacing + 210 + (hash(cx, cz, seed + 1802) - .5) * 320;
     // Seas claim their surroundings: no pond's basin may overlap a sea's,
     // including a sea in the neighbouring cell when the pond sits near its edge.
     const clear = [-320, 320].every(dx => [-320, 320].every(dz => {
       const sea = seaAt(x + dx, z + dz);
       return !sea || Math.hypot(x - sea.x, z - sea.z) > lakeExtent(sea) * SEA_REACH + 320;
     }));
+    // A pond needs a basin: on a hillside or mountain slope, where the land
+    // around it falls away more than a few metres, it would be dug in as a pit.
+    let lo = Infinity, hi = -Infinity;
+    if (clear && !starter) for (let i = 0; i < 16; i++) {
+      const h = baseHeight(x + Math.sin(i * Math.PI / 8) * 120, z + Math.cos(i * Math.PI / 8) * 125);
+      lo = Math.min(lo, h); hi = Math.max(hi, h);
+    }
     let pond = null;
-    if (clear) {
+    if (clear && (starter || (hi - lo < 14 && hash(cx, cz, seed + 1806) < .65))) {
       pond = { id: `lake:${key}`, x, z, shape: [], rx: starter ? 96 : 100 + hash(cx, cz, seed + 1803) * 28,
         rz: starter ? 108 : 104 + hash(cx, cz, seed + 1804) * 30,
         level: baseHeight(x, z) - 1.5, depth: 8 + hash(cx, cz, seed + 1805) * 4,
         name: starter ? 'MIRROR LAKE' : 'THE LAKES' };
-      rimLevel(pond, true);
+      rimLevel(pond);
     }
     if (ponds.size >= 128) ponds.delete(ponds.keys().next().value);
     ponds.set(key, pond); return pond;
@@ -100,9 +109,10 @@ export function createLakes(seed, baseHeight, roadAt) {
     const lake = lakeAt(x, z); if (!lake) return original;
     const r = lakeRadius(lake, x, z);
     if (lake.sea) {
-      // Broad, gently shelving coasts. Roads simply run down into the water.
+      // Broad, gently shelving coasts, sparing the roads (and bridge
+      // approaches) that run along or beside them.
       const basin = lake.level - lake.depth * (1 - smooth(.3, 1, r)) + smooth(.88, 1.12, r) * 3 + Math.max(0, r - 1.12) * 12;
-      return original + (basin - original) * (1 - smooth(1.05, SEA_REACH, r));
+      return original + (basin - original) * (1 - smooth(1.05, SEA_REACH, r)) * (r < 1 ? 1 : smooth(10, 50, roadAt(x, z).d));
     }
     const basin = lake.level - lake.depth * (1 - smooth(.18, .98, r)) + smooth(.88, 1.15, r) * 3 + Math.max(0, r - 1.15) * 10;
     const weight = (1 - smooth(1.05, 2.1, r)) * smooth(12, 110, roadAt(x, z).d);
