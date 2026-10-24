@@ -1,7 +1,7 @@
-import { CHUNK } from './world.mjs?v=roadside-1';
+import { CHUNK } from './world.mjs?v=classes-2';
 // Three terrain tiers, each covering 4 × 4 cells of the tier inside it:
 // near chunks (96 m, 4 m grid), far tiles (384 m, 24 m grid) and horizon
-// tiles (1536 m, 96 m grid) that keep mountains on the skyline when flying.
+// tiles (1536 m, 48 m grid) that keep mountains on the skyline when flying.
 export const FAR_SIZE = CHUNK * 4;
 export const ULTRA_SIZE = FAR_SIZE * 4;
 export const NEAR_VIEW = 4;
@@ -20,13 +20,15 @@ function coverage(tx, tz, hasInner) {
 }
 // A tile keeps its vertex data; only its index list changes as inner tiles
 // arrive or leave. No overlapping triangles between tiers, and no cracks.
-function indices(tx, tz, hasInner) {
-  const result = [], n = 16, per = n / 4;
+// split: which diagonal each of its n × n squares is cut along (terrain.mjs;
+// a far tile's 16 × 16 all one way if not given).
+function indices(tx, tz, hasInner, split = new Uint8Array(256)) {
+  const result = [], n = Math.round(Math.sqrt(split.length)), per = n / 4;
   for (let z = 0; z < n; z++) for (let x = 0; x < n; x++) {
     const cx = tx * 4 + Math.floor(x / per), cz = tz * 4 + Math.floor(z / per);
     if (hasInner(cx, cz)) continue;
-    const a = z * (n + 1) + x, b = a + 1, c = a + n + 1;
-    result.push(a, c, b, b, c, c + 1);
+    const a = z * (n + 1) + x, b = a + 1, c = a + n + 1, d = c + 1;
+    if (split[z * n + x]) result.push(a, c, d, a, d, b); else result.push(a, c, b, b, c, d);
   }
   return result;
 }

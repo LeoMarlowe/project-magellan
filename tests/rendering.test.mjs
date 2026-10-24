@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../vendor/three.module.js';
 import { cloneOwnedGeometry } from '../scenery.mjs';
-import { createTerrain } from '../terrain.mjs';
+import { createTerrain, ULTRA_GRID } from '../terrain.mjs';
 import { farIndices, ultraIndices, ultraCoverage, FAR_SIZE, ULTRA_SIZE, FAR_VIEW, ULTRA_BLEND_END } from '../streaming-layout.mjs';
 import { createWorld } from '../world.mjs';
 
@@ -55,13 +55,15 @@ test('debris remains bounded, falls onto terrain, expires and clears on world re
 });
 
 test('horizon tiles cut out loaded far tiles, and far tiles meet them with identical heights', () => {
-  assert.equal(ultraIndices(0, 0, () => false).length, 16 * 16 * 6);
-  assert.equal(ultraIndices(-1, 2, (fx, fz) => fx === -4 && fz === 8).length, (256 - 16) * 6);
+  // A horizon tile has 32 × 32 squares (48 m), 8 × 8 under each far tile.
+  const split = new Uint8Array(32 * 32);
+  assert.equal(ultraIndices(0, 0, () => false, split).length, 32 * 32 * 6);
+  assert.equal(ultraIndices(-1, 2, (fx, fz) => fx === -4 && fz === 8, split).length, (1024 - 64) * 6);
   assert.equal(ultraCoverage(0, 0, (fx, fz) => fx === 3 && fz === 3), 1 << 15);
   // The blend to horizon heights completes before the far tiles end.
   assert.ok(ULTRA_BLEND_END < FAR_VIEW * FAR_SIZE);
   const world = createWorld(100003), terrain = createTerrain(world);
-  const horizon = terrain.build(0, 0, ULTRA_SIZE, 96), far = terrain.build(FAR_SIZE, 0, FAR_SIZE, 24);
+  const horizon = terrain.build(0, 0, ULTRA_SIZE, ULTRA_GRID), far = terrain.build(FAR_SIZE, 0, FAR_SIZE, 24);
   // Along the far tile's whole outline, its fully blended height is the
   // horizon tile's own triangle surface: no cracks between the tiers.
   const ultraAt = (x, z) => terrain.ultraSample(x, z).height;
@@ -69,8 +71,10 @@ test('horizon tiles cut out loaded far tiles, and far tiles meet them with ident
     const i = iz * 17 + ix, x = FAR_SIZE + ix * 24, z = iz * 24;
     assert.ok(Math.abs(far.ultraHeight[i] - ultraAt(x, z)) < 1e-4);
   }
-  for (let iz = 0; iz <= 16; iz++) for (let ix = 0; ix <= 16; ix++) {
-    assert.equal(horizon.position[(iz * 17 + ix) * 3 + 1], Math.fround(world.height(ix * 96, iz * 96)));
-    assert.ok(Math.abs(ultraAt(ix * 96, iz * 96) - world.height(ix * 96, iz * 96)) < 1e-4);
+  for (let iz = 0; iz <= 32; iz++) for (let ix = 0; ix <= 32; ix++) {
+    assert.equal(horizon.position[(iz * 33 + ix) * 3 + 1], Math.fround(world.height(ix * ULTRA_GRID, iz * ULTRA_GRID)));
+    assert.ok(Math.abs(ultraAt(ix * ULTRA_GRID, iz * ULTRA_GRID) - world.height(ix * ULTRA_GRID, iz * ULTRA_GRID)) < 1e-4);
   }
+  // Every square is cut along its diagonal nearer in height, in the mesh and its index lists alike.
+  assert.deepEqual([...ultraIndices(0, 0, () => false, horizon.split)], [...horizon.index]);
 });

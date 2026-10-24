@@ -1,10 +1,10 @@
-import { createWorld, CHUNK, GRID } from './world.mjs?v=roadside-1';
-import { createTerrain } from './terrain.mjs?v=rivers-1';
+import { createWorld, CHUNK, GRID } from './world.mjs?v=classes-2';
+import { createTerrain, ULTRA_GRID } from './terrain.mjs?v=classes-3';
 import { buildGrass } from './grass-data.mjs?v=terrain-1';
 import { buildWaterData, buildDistantWater, buildRiverWater } from './water-data.mjs?v=rivers-1';
-import { buildBridges } from './bridge-data.mjs?v=rivers-1';
-import { buildRoadside } from './roadside-data.mjs?v=roadside-1';
-import { FAR_SIZE, ULTRA_SIZE } from './streaming-layout.mjs?v=physics-16';
+import { buildBridges } from './bridge-data.mjs?v=classes-2';
+import { buildRoadside } from './roadside-data.mjs?v=classes-2';
+import { FAR_SIZE, ULTRA_SIZE } from './streaming-layout.mjs?v=classes-3';
 let world, terrain;
 self.onmessage = ({ data: job }) => {
   try {
@@ -22,10 +22,10 @@ self.onmessage = ({ data: job }) => {
     }
     const size = job.kind === 'near' ? CHUNK : job.kind === 'ultra' ? ULTRA_SIZE : FAR_SIZE;
     const wx = job.cx * size, wz = job.cz * size;
-    const ground = terrain.build(wx, wz, size, job.kind === 'near' ? GRID : job.kind === 'ultra' ? 96 : 24);
+    const ground = terrain.build(wx, wz, size, job.kind === 'near' ? GRID : job.kind === 'ultra' ? ULTRA_GRID : 24);
     // The tile's road maps, for the ground shader to paint its roads from
-    // (near chunks add the detail map: solid lines, dips, junctions), and
-    // its river water (near chunks and far tiles).
+    // (classes, solid lines, dips, junctions), and its river water (near
+    // chunks and far tiles).
     const maps = world.roadMap(wx, wz, size, undefined, job.kind === 'near');
     const result = { ...job, ground, roadMap: maps.map, roadInfo: maps.info };
     if (job.kind !== 'ultra') result.river = buildRiverWater(world, terrain, wx, wz, size, job.kind === 'near' ? 0 : 1, job.kind === 'near' ? 1 : 3);
@@ -53,6 +53,6 @@ self.onmessage = ({ data: job }) => {
       result.trees = trees;
     }
     result.workMs = performance.now() - start;
-    self.postMessage(result, [...Object.values(ground), ...Object.values(result.grass || {}), ...Object.values(result.river || {}), ...Object.values(result.bridges || {}), ...Object.values(result.roadside?.mesh || {}), ...Object.values(result.roadside?.signs || {}).filter(v => ArrayBuffer.isView(v)), result.roadMap, ...(result.roadInfo ? [result.roadInfo] : [])].map(array => array.buffer));
+    self.postMessage(result, [...Object.values(ground), ...Object.values(result.grass || {}), ...Object.values(result.river || {}), ...Object.values(result.bridges || {}), ...Object.values(result.roadside?.mesh || {}), ...Object.values(result.roadside?.signs || {}).filter(v => ArrayBuffer.isView(v)), result.roadMap, result.roadInfo].map(array => array.buffer));
   } catch (error) { self.postMessage({ id: job.id, generation: job.generation, error: error.message }); }
 };

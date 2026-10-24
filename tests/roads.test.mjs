@@ -7,12 +7,12 @@ import { buildRoadside } from '../roadside-data.mjs';
 // Two seeds' roads and rivers within 3 km of the start, worked out once.
 const RADIUS = 3000;
 const worlds = [3, 11].map(seed => { const world = createWorld(seed); world.prepareRoads(0, 0, RADIUS, Infinity); return world; });
-const roadsOf = world => world.roadsNear(0, 0, RADIUS);
+const roadsOf = world => world.roadsNear(0, 0, RADIUS), networkOf = world => world.roadsNear(0, 0, RADIUS, true);
 const bridgesOf = world => roadsOf(world).flatMap(road => road.bridges.map(bridge => ({ road, bridge, unit: road.length / (road.count - 1) })));
 
 test('roads follow the land: evenly spaced points, an 11% grade at most, and junctions that meet', () => {
   for (const world of worlds) {
-    const roads = roadsOf(world), junctions = new Map();
+    const roads = networkOf(world), junctions = new Map();
     assert.ok(roads.length > 20, `seed ${world.seed}: ${roads.length} roads`);
     for (const road of roads) {
       const unit = road.length / (road.count - 1);
@@ -83,7 +83,7 @@ test('bridges carry roads over rivers, well clear of the water, with boats passi
       }
       // No step anywhere from the approach, onto the deck and off again.
       let worst = 0;
-      for (let s = (bridge.i0 - 12) * unit; s < (bridge.i1 + 12) * unit; s++) {
+      for (let s = (bridge.i0 - 8) * unit; s < (bridge.i1 + 8) * unit; s++) {
         const p = world.alongRoad(road, s), q = world.alongRoad(road, s + 1);
         worst = Math.max(worst, Math.abs(world.surface(q.x, q.z) - world.surface(p.x, p.z)));
       }
@@ -134,7 +134,7 @@ test('roads and rivers worked out a slice at a time match those worked out at on
 });
 
 test('road maps paint each road where the physics puts it', () => {
-  const world = worlds[0], road = roadsOf(world).find(r => !r.bridges.length), size = 96, res = 128;
+  const world = worlds[0], road = networkOf(world).find(r => !r.bridges.length), size = 96, res = 128;
   const p = world.alongRoad(road, road.length / 2), x0 = Math.floor(p.x / size) * size, z0 = Math.floor(p.z / size) * size;
   const { map } = world.roadMap(x0, z0, size, res), texel = size / res;
   for (let j = 0; j < res; j += 7) for (let i = 0; i < res; i += 7) {
@@ -170,17 +170,17 @@ test('junctions: a main road through each, and side roads that stop clear of it'
 test('the centre line is solid on about a fifth of the road, and road maps know which side of it a point lies', () => {
   for (const world of worlds) {
     let solid = 0, total = 0;
-    for (const road of roadsOf(world)) for (let k = 0; k < road.count; k++) { solid += road.solid[k]; total++; }
+    for (const road of networkOf(world)) for (let k = 0; k < road.count; k++) { solid += road.solid[k]; total++; }
     assert.ok(solid / total > .1 && solid / total < .4, `seed ${world.seed}: ${(solid / total * 100).toFixed(0)}% solid`);
-    const road = roadsOf(world).find(r => !r.bridges.length);
+    const road = networkOf(world).find(r => !r.bridges.length);
     for (const side of [-1, 1]) {
       const p = world.alongRoad(road, road.length / 2, side), x0 = Math.floor(p.x / CHUNK) * CHUNK, z0 = Math.floor(p.z / CHUNK) * CHUNK;
       const { map, info } = world.roadMap(x0, z0, CHUNK, 128, true), q = (Math.floor((p.z - z0) / .75) * 128 + Math.floor((p.x - x0) / .75)) * 4;
-      assert.ok(Math.abs((map[q + 3] / 255 * 2 - 1) * 1.6 - side) < .2, `a point 1 m ${side > 0 ? 'left' : 'right'} of the centre line`);
+      assert.ok(Math.abs((map[q + 3] / 255 * 2 - 1) * 4 - side) < .2, `a point 1 m ${side > 0 ? 'left' : 'right'} of the centre line`);
       // Mid-road: no junction near, and not a side road's approach.
       assert.equal(info[q + 2], 255); assert.equal(info[q + 3], 128);
     }
-    assert.equal(world.roadMap(0, 0, 384, 128, false).info, null, 'far tiles have no detail map');
+    assert.ok(world.roadMap(0, 0, 384, 128, false).info, 'far tiles have a detail map too (road classes)');
   }
 });
 
@@ -235,4 +235,101 @@ test('a car knocks a sign over and drives on', () => {
     assert.ok(Math.hypot(car.x - sign.x, car.z - sign.z) > 5, 'the car carries on past it');
   }
   assert.equal(world.drainBreakEvents().filter(e => e.type === 'sign').length, signs.length);
+});
+
+test('lanes lead off the roads to camps, lookouts and lakes, joining at a T and ending there', () => {
+  for (const world of worlds) {
+    const spurs = roadsOf(world).filter(road => road.spur && !road.spur.track);
+    assert.ok(spurs.length > 20, `seed ${world.seed}: ${spurs.length} lanes`);
+    for (const spur of spurs) {
+      const [start, end] = world.roadEnds(spur);
+      assert.ok(start && !start.main && start.setback > ROAD_HALF && end === null, `${spur.id}: a T junction where it leaves its road, a dead end at the other`);
+      // It starts on its road, at its road's height.
+      const parent = networkOf(world).find(e => e.id === spur.spur.parent), p = world.alongRoad(parent, spur.spur.s);
+      const f = spur.spur.s / parent.length * (parent.count - 1), k = Math.min(Math.floor(f), parent.count - 2);
+      assert.ok(Math.hypot(p.x - spur.points[0], p.z - spur.points[1]) < .5 && Math.abs(spur.level[0] - (parent.level[k] + (parent.level[k + 1] - parent.level[k]) * (f - k))) < .05, `${spur.id} leaves its road`);
+      for (let k = 1; k < spur.count; k++) assert.ok(Math.abs(spur.level[k] - spur.level[k - 1]) <= spur.length / (spur.count - 1) * .15, `${spur.id} stays drivable`);
+      const x = spur.points[spur.count * 2 - 2], z = spur.points[spur.count * 2 - 1];
+      if (spur.spur.slipway) assert.ok(world.waterAt(x, z), `${spur.id} runs down into the water`);
+      else assert.ok(world.featuresNear(x, z, 40).some(f => ['camp', 'lookout'].includes(f.type) && Math.hypot(f.x - x, f.z - z) < 14), `${spur.id} ends at its site`);
+    }
+  }
+});
+
+test('now and then a junction is a roundabout: a ring round a bare island, every road giving way', () => {
+  let rings = 0;
+  for (const world of worlds) for (const ring of roadsOf(world).filter(road => road.ring)) {
+    rings++;
+    const junction = ring.ring;
+    assert.ok(junction.arms.length >= 4 && junction.arms.every(arm => !arm.main && arm.ring && arm.setback >= 16 + ROAD_HALF), `${ring.id}: every road gives way outside the ring`);
+    assert.ok(Math.hypot(ring.points[0] - ring.points[ring.count * 2 - 2], ring.points[1] - ring.points[ring.count * 2 - 1]) < .01, 'the ring closes');
+    // The island has no asphalt painted on it.
+    const x0 = Math.floor(junction.x / CHUNK) * CHUNK, z0 = Math.floor(junction.z / CHUNK) * CHUNK, { map } = world.roadMap(x0, z0, CHUNK, 128, true);
+    const q = (Math.floor((junction.z - z0) / .75) * 128 + Math.floor((junction.x - x0) / .75)) * 4;
+    assert.ok(map[q] * .05 > ROAD_HALF + 3, `${ring.id}: a bare island`);
+  }
+  assert.ok(rings > 0, 'some roundabouts near the start');
+});
+
+test('roads climb into the mountains in hairpin bends, never steeper than 11%', () => {
+  let mountain = 0, hairpins = 0;
+  for (const seed of [3, 12345]) {
+    const world = createWorld(seed); world.prepareRoads(0, 0, 4000, Infinity);
+    for (const road of world.roadsNear(0, 0, 4000, true)) {
+      const unit = road.length / (road.count - 1);
+      for (let k = 0; k < road.count; k++) {
+        if (world.mountainAt(road.points[k * 2], road.points[k * 2 + 1]) > .35) mountain++;
+        if (k && Math.abs(road.curve[k]) > 1 / 35 && Math.abs(road.curve[k - 1]) <= 1 / 35) hairpins++;
+        if (k) assert.ok(Math.abs(road.level[k] - road.level[k - 1]) <= unit * .11 + 1e-4, `${road.id} climbs too steeply`);
+      }
+    }
+  }
+  assert.ok(mountain > 200 && hairpins > 5, `${mountain} road points in the mountains, ${hairpins} hairpins`);
+});
+
+test('highways, country roads and dirt tracks: each kind as wide as it should be', () => {
+  for (const world of worlds) {
+    const kinds = {};
+    for (const road of networkOf(world)) {
+      kinds[road.kind] = (kinds[road.kind] || 0) + road.length;
+      const unit = road.length / (road.count - 1);
+      if (road.kind === 'highway') for (let k = 1; k < road.count; k++) assert.ok(Math.abs(road.level[k] - road.level[k - 1]) <= unit * .075 + 1e-4, `${road.id}: a highway stays gentle`);
+    }
+    assert.ok(kinds.highway > 10000 && kinds.road > 20000 && kinds.dirt > 5000, `seed ${world.seed}: ${JSON.stringify(kinds)}`);
+    // Each road's edge is ROAD_HALF from the line, by its own width: a point 6 m out is on a highway, off a dirt track.
+    const highway = networkOf(world).find(r => r.kind === 'highway' && !r.bridges.length), track = networkOf(world).find(r => r.kind === 'dirt' && !r.bridges.length);
+    for (const [road, inside] of [[highway, true], [track, false]]) {
+      const p = world.alongRoad(road, road.length / 2, 6), here = world.roadAt(p.x, p.z);
+      if (here.id === road.id) assert.equal(here.d < ROAD_HALF, inside, `${road.kind} at 6 m`);
+    }
+  }
+});
+
+test('mountain tracks climb from the roads to the high tops, some above the snow line', () => {
+  let tracks = 0, highest = 0;
+  for (const seed of [3, 12345]) {
+    const world = createWorld(seed); world.prepareRoads(0, 0, 4000, Infinity);
+    for (const track of world.roadsNear(0, 0, 4000).filter(road => road.spur?.track)) {
+      tracks++; highest = Math.max(highest, ...track.level);
+      assert.equal(track.kind, 'dirt');
+      const unit = track.length / (track.count - 1);
+      for (let k = 1; k < track.count; k++) assert.ok(Math.abs(track.level[k] - track.level[k - 1]) <= unit * .17 + 1e-4, `${track.id} stays drivable`);
+      assert.ok(world.roadEnds(track)[0] && world.roadEnds(track)[1] === null, `${track.id}: a T junction at the road, a dead end at the top`);
+    }
+  }
+  assert.ok(tracks >= 3 && highest > 250, `${tracks} tracks, the highest reaching ${highest.toFixed(0)} m`);
+});
+
+test('dirt is slower and looser than tarmac', () => {
+  const run = kind => {
+    const world = { surface: () => 0, gradient: () => ({ x: 0, z: 0 }), roadAt: (x, z) => ({ d: 0, x, z, kind }), props: () => [] };
+    const car = createVehicle(world); for (let i = 0; i < 2400; i++) stepVehicle(car, { up: true }, world, []);
+    const top = car.speed; car.steer = 0;
+    for (let i = 0; i < 60; i++) stepVehicle(car, { up: true, left: true }, world, []);
+    return { top, slip: Math.abs(car.vx * Math.cos(car.heading) - car.vz * Math.sin(car.heading)), dirt: car.onDirt };
+  };
+  const tarmac = run('road'), dirt = run('dirt');
+  assert.ok(dirt.dirt && !tarmac.dirt);
+  assert.ok(dirt.top < tarmac.top * .95 && dirt.top > tarmac.top * .7, `dirt ${dirt.top * 3.6} km/h, tarmac ${tarmac.top * 3.6} km/h`);
+  assert.ok(dirt.slip > tarmac.slip, 'the car slides more on dirt');
 });

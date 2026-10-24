@@ -19,10 +19,14 @@ export function fbm(x, z, seed, octaves, gain = .5) {
 }
 // Ridged multifractal, 0–1: sharp crests, and each octave's detail weighted by
 // the one below, so ridgelines are rugged while valley floors stay smooth.
+// Each crest is rounded just a little: a perfect V is sharper than the 4 m
+// terrain grid can show, and would alias into saw teeth along the slopes.
+const CREST = .08;
 export function ridged(x, z, seed, octaves) {
   let sum = 0, norm = 0, amp = 1, weight = 1;
   for (let i = 0; i < octaves; i++) {
-    let n = 1 - Math.abs(noise(x, z, seed + i * 31) * 2 - 1);
+    const v = noise(x, z, seed + i * 31) * 2 - 1;
+    let n = (1 - Math.sqrt(v * v + CREST * CREST)) / (1 - CREST);
     n *= n * weight; weight = clamp(n * 1.8, 0, 1);
     sum += n * amp; norm += amp;
     [x, z] = rotate(x * 2.07, z * 2.07); amp *= .5;
@@ -63,12 +67,12 @@ export function createLandforms(seed) {
     h += (noise(x * .019 + 4.1, z * .019 + 3.2, seed + 31) - .5) * (1.2 + offroad * 5 * (1 - desert)); // rollers
     if (mountain > 0) {
       const wx = (fbm(x / 900 + 9.4, z / 900, seed + 420, 2) - .5) * .8, wz = (fbm(x / 900, z / 900 - 4.4, seed + 421, 2) - .5) * .8;
-      const crest = ridged(x / 1150 + wx, z / 1150 + wz, seed + 422, 6), foothills = fbm(x / 700, z / 700, seed + 423, 3);
+      const crest = ridged(x / 1150 + wx, z / 1150 + wz, seed + 422, 5), foothills = fbm(x / 700, z / 700, seed + 423, 3);
       h += (Math.pow(crest, 1.35) * PEAK + (foothills - .35) * 70) * mountain;
       // Crags: finer rugged relief on the upper slopes, so faces are not
       // smooth cones up close; the lower slopes stay grassy and smooth.
       const high = smoothstep(.12, .45, crest) * mountain;
-      if (high > 0) h += (ridged(x / 95 + wx * 4, z / 95 + wz * 4, seed + 424, 3) - .32) * 16 * high;
+      if (high > 0) h += (ridged(x / 95 + wx * 4, z / 95 + wz * 4, seed + 424, 2) - .32) * 16 * high;
     }
     if (desert > .01) {
       // Dunes: long ridges across a slowly turning wind, gentle to windward
@@ -80,7 +84,7 @@ export function createLandforms(seed) {
       h += profile * 11 * smoothstep(.35, .65, fbm(x / 800, z / 800, seed + 432, 2)) * desert * (1 - hills) * offroad;
       // Mesas: flat-topped buttes with cliff walls, in the desert hills.
       const m = fbm(x / 520, z / 520, seed + 433, 3);
-      h += (smoothstep(.57, .6, m) * 34 + smoothstep(.66, .685, m) * 16) * desert * smoothstep(.2, .6, hills);
+      h += (smoothstep(.565, .605, m) * 34 + smoothstep(.655, .69, m) * 16) * desert * smoothstep(.2, .6, hills);
     }
     return { height: h, type, mountain, hills, desert };
   }

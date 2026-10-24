@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWorld, createVehicle, stepVehicle, recoverVehicle, resolveObstacles, groundAt, featurePoint, featureLocal, FIXED_DT, CHUNK, GRID, SPEED_LIMIT, VARIANT } from '../world.mjs';
+import { createWorld, createVehicle, stepVehicle, recoverVehicle, resolveObstacles, groundAt, featurePoint, featureLocal, FIXED_DT, CHUNK, GRID, SPEED_LIMIT, VARIANT, cellWeights } from '../world.mjs';
 import { SNOW_LINE } from '../landforms.mjs';
 const flat = { surface: () => 0, gradient: () => ({ x: 0, z: 0 }), roadAt: (x, z) => ({ d: 0, x, z }), props: () => [] };
 function advance(car, input, world, seconds, obstacles = []) { for (let t = 0; t < Math.round(seconds / FIXED_DT); t++) stepVehicle(car, input, world, obstacles); }
@@ -16,8 +16,9 @@ test('terrain agrees with the rendered triangle grid and has no chunk discontinu
   const world = createWorld(483921);
   for (let x = -400; x < 400; x += GRID) for (let z = -400; z < 400; z += 20) {
     assert.equal(world.surface(x, z), world.height(x, z));
-    const a = world.height(x, z), b = world.height(x + GRID, z), c = world.height(x, z + GRID);
-    assert.ok(Math.abs(world.surface(x + 1, z + 1) - (a + (b - a) / 4 + (c - a) / 4)) < 1e-10);
+    // Each square split along its diagonal nearer in height (cellWeights).
+    const a = world.height(x, z), b = world.height(x + GRID, z), c = world.height(x, z + GRID), d = world.height(x + GRID, z + GRID), w = cellWeights(.25, .25, a, b, c, d);
+    assert.ok(Math.abs(world.surface(x + 1, z + 1) - (a * w[0] + b * w[1] + c * w[2] + d * w[3])) < 1e-10);
   }
   for (let c = -25; c <= 25; c++) for (let i = 0; i < 20; i++) {
     const x = c * CHUNK, z = i * 67 - 300;
@@ -57,17 +58,18 @@ test('mountain ranges rise to snowy peaks a few hundred metres high, away from t
   }
 });
 
-test('steep climbs slow the car, and faces steeper than about 40 degrees cannot be climbed', () => {
+test('steep climbs slow the car, and faces steeper than about 47 degrees cannot be climbed', () => {
   const top = grade => {
     const slope = { ...flat, roadAt: () => ({ d: 20 }), surface: (x, z) => z * grade, gradient: () => ({ x: 0, z: grade }) };
     const car = createVehicle(slope); let best = 0;
     for (let i = 0; i < 2400; i++) { stepVehicle(car, { up: true }, slope, []); best = Math.max(best, car.vz); }
     return { best: best * 3.6, final: car.vz * 3.6 };
   };
-  const level = top(0).best, gentle = top(.15).best, steep = top(.5).best, wall = top(1);
+  const level = top(0).best, gentle = top(.15).best, steep = top(.5).best, hard = top(1).best, wall = top(1.11);
   assert.ok(gentle > level * .95, `a gentle grade barely slows the car: ${gentle}`);
-  assert.ok(steep < level * .7 && steep > 80, `a 27° climb is slow but possible: ${steep}`);
-  assert.ok(wall.best < 30 && wall.final < 0, 'a 45° face cannot be climbed: the car slides back');
+  assert.ok(steep < level * .8 && steep > 120, `a 27° climb is slower but quick: ${steep}`);
+  assert.ok(hard > 20 && hard < 80, `a 45° climb is a slow crawl: ${hard}`);
+  assert.ok(wall.best < 30 && wall.final < 0, 'a 48° face cannot be climbed: the car slides back');
 });
 test('richer scenery leaves roads and ramp approaches clear and stays deterministic', () => {
   const world = createWorld(483921); let count = 0;
@@ -356,4 +358,26 @@ test('a jump made mid-crest leaves no stored gap to relaunch the car after landi
     assert.ok(!(landed && was && !car.grounded), 'relaunched itself on flat ground');
   }
   assert.ok(landed); assert.equal(car.jumps, 1);
+});
+
+test('a face steeper than about 52° stops the car instead of throwing it off the top', () => {
+  const rise = z => z < 10 ? 0 : (z - 10) * 1.7;
+  const wall = { ...flat, roadAt: () => ({ d: 20 }), surface: (x, z) => rise(z), gradient: (x, z) => ({ x: 0, z: z < 10 ? 0 : 1.7 }) };
+  const car = createVehicle(wall); car.vz = 12; let highest = 0;
+  for (let i = 0; i < 360; i++) { stepVehicle(car, { up: true }, wall, []); highest = Math.max(highest, car.y - rise(car.z)); }
+  // (Its front wheels rest on the face, a metre or so up; it is never thrown higher.)
+  assert.ok(car.z < 11.5 && highest < 1.6, `held at the foot (${car.z.toFixed(2)} m, ${highest.toFixed(2)} m clear)`);
+});
+
+test('a crest of the land at a crawl is no jump, but at speed it launches', () => {
+  // A 30° bank 6 m high with a flat top, coasted up from 45 km/h.
+  const bank = z => z < 10 ? 0 : z < 20.4 ? (z - 10) * .577 : 6;
+  const land = { ...flat, roadAt: () => ({ d: 20 }), surface: (x, z) => bank(z), gradient: (x, z) => ({ x: 0, z: z >= 10 && z < 20.4 ? .577 : 0 }) };
+  const car = createVehicle(land); car.vz = 12.5; let highest = 0;
+  for (let i = 0; i < 360; i++) { stepVehicle(car, {}, land, []); highest = Math.max(highest, car.y - bank(car.z)); }
+  assert.ok(highest < .5, `cleared the crest by ${highest.toFixed(2)} m`);
+  // Floored from the same speed it meets the crest at over 120 km/h, and flies.
+  const fast = createVehicle(land); fast.vz = 12.5; let flown = 0;
+  for (let i = 0; i < 360; i++) { stepVehicle(fast, { up: true }, land, []); flown = Math.max(flown, fast.y - bank(fast.z)); }
+  assert.ok(flown > 3, `a fast crest launches: ${flown.toFixed(2)} m`);
 });

@@ -28,7 +28,8 @@ export function buildBridges(world, x0, z0, size) {
     if (mid.x < x0 || mid.x >= x0 + size || mid.z < z0 || mid.z >= z0 + size) continue;
     // Level across the span; its ends follow the approach ramps into the road.
     const levelAt = s => { const t = s / unit, k = Math.min(road.count - 2, Math.floor(t)); return road.level[k] + (road.level[k + 1] - road.level[k]) * (t - k); };
-    const y = b.level;
+    // Wider for a highway, narrower for a track.
+    const y = b.level, w = road.extra;
     // The deck, in 2 m pieces so it follows the road's curve.
     const pieces = Math.max(2, Math.ceil((s1 - s0) / 2));
     for (let k = 0; k < pieces; k++) {
@@ -37,32 +38,32 @@ export function buildBridges(world, x0, z0, size) {
       const ya = levelAt(a), ye = levelAt(e);
       const corner = (point, across, up) => [point.x + Math.cos(point.heading) * across, (point === p ? ya : ye) + up, point.z - Math.sin(point.heading) * across];
       // Road surface and its markings (edge lines, and the centre dashes on the same 14 m cycle as the roads).
-      quad(corner(p, -5.4, .02), corner(q, -5.4, .02), corner(q, 5.4, .02), corner(p, 5.4, .02), ASPHALT);
-      for (const side of [-1, 1]) quad(corner(p, side * 4.2, .03), corner(q, side * 4.2, .03), corner(q, side * 4.07, .03), corner(p, side * 4.07, .03), PAINT);
-      if (Math.cos(((a + e) / 2) * Math.PI * 2 / 14) > 0) quad(corner(p, -.065, .03), corner(q, -.065, .03), corner(q, .065, .03), corner(p, .065, .03), PAINT);
+      quad(corner(p, -5.4 - w, .02), corner(q, -5.4 - w, .02), corner(q, 5.4 + w, .02), corner(p, 5.4 + w, .02), ASPHALT);
+      for (const side of [-1, 1]) if (road.kind !== 'dirt') quad(corner(p, side * (4.2 + w), .03), corner(q, side * (4.2 + w), .03), corner(q, side * (4.07 + w), .03), corner(p, side * (4.07 + w), .03), PAINT);
+      if (road.kind !== 'dirt' && Math.cos(((a + e) / 2) * Math.PI * 2 / 14) > 0) quad(corner(p, -.065, .03), corner(q, -.065, .03), corner(q, .065, .03), corner(p, .065, .03), PAINT);
       // Curbs, the deck's sides and its underside.
       for (const side of [-1, 1]) {
-        quad(corner(p, side * 5.4, .28), corner(q, side * 5.4, .28), corner(q, side * 6, .28), corner(p, side * 6, .28), CONCRETE);
-        quad(corner(p, side * 5.4, .02), corner(q, side * 5.4, .02), corner(q, side * 5.4, .28), corner(p, side * 5.4, .28), CONCRETE);
-        quad(corner(p, side * 6, .28), corner(q, side * 6, .28), corner(q, side * 6, -.9), corner(p, side * 6, -.9), SHADE);
+        quad(corner(p, side * (5.4 + w), .28), corner(q, side * (5.4 + w), .28), corner(q, side * (6 + w), .28), corner(p, side * (6 + w), .28), CONCRETE);
+        quad(corner(p, side * (5.4 + w), .02), corner(q, side * (5.4 + w), .02), corner(q, side * (5.4 + w), .28), corner(p, side * (5.4 + w), .28), CONCRETE);
+        quad(corner(p, side * (6 + w), .28), corner(q, side * (6 + w), .28), corner(q, side * (6 + w), -.9), corner(p, side * (6 + w), -.9), SHADE);
       }
-      quad(corner(p, 6, -.9), corner(q, 6, -.9), corner(q, -6, -.9), corner(p, -6, -.9), SHADE);
+      quad(corner(p, 6 + w, -.9), corner(q, 6 + w, -.9), corner(q, -6 - w, -.9), corner(p, -6 - w, -.9), SHADE);
     }
     // Posts every 3 m and a rail along each side.
     for (let s = s0 + 1; s < s1 - .5; s += 3) {
       const p = world.alongRoad(road, s);
-      for (const side of [-1, 1]) box(p.x + Math.cos(p.heading) * side * 5.75, levelAt(s) + .78, p.z - Math.sin(p.heading) * side * 5.75, p.heading, .07, .5, .07, CONCRETE);
+      for (const side of [-1, 1]) box(p.x + Math.cos(p.heading) * side * (5.75 + w), levelAt(s) + .78, p.z - Math.sin(p.heading) * side * (5.75 + w), p.heading, .07, .5, .07, CONCRETE);
     }
     for (let k = 0; k < pieces; k++) {
       const s = s0 + (s1 - s0) * (k + .5) / pieces, p = world.alongRoad(road, s), half = (s1 - s0) / pieces / 2 + .02;
-      for (const side of [-1, 1]) box(p.x + Math.cos(p.heading) * side * 5.75, levelAt(s) + 1.3, p.z - Math.sin(p.heading) * side * 5.75, p.heading, .08, .06, half, CONCRETE);
+      for (const side of [-1, 1]) box(p.x + Math.cos(p.heading) * side * (5.75 + w), levelAt(s) + 1.3, p.z - Math.sin(p.heading) * side * (5.75 + w), p.heading, .08, .06, half, CONCRETE);
     }
     // Piers about every 14 m, from the deck down to the bed.
     const spans = Math.max(1, Math.round((s1 - s0) / 14));
     for (let k = 1; k < spans; k++) {
       const p = world.alongRoad(road, s0 + (s1 - s0) * k / spans), bed = world.groundSurface(p.x, p.z) - .5;
       if (bed > y - 1.2) continue;
-      box(p.x, (y - .9 + bed) / 2, p.z, p.heading, 3.6, (y - .9 - bed) / 2, .55, SHADE);
+      box(p.x, (y - .9 + bed) / 2, p.z, p.heading, 3.6 + w, (y - .9 - bed) / 2, .55, SHADE);
     }
   }
   if (!position.length) return null;

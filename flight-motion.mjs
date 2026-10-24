@@ -1,6 +1,6 @@
 // Arcade flight for the transforming ATLAS: deterministic fixed-step motion
 // shared by the game and the tests, with no renderer required.
-import { waterWave } from './lakes.mjs?v=rivers-1';
+import { waterWave } from './lakes.mjs?v=classes-2';
 import { controlAxis } from './controls.mjs?v=slider-1';
 export const FLIGHT_TRANSFORM_SECONDS = 1.6;
 export const TAKEOFF_SPEED = 32; // m/s, 115 km/h: the propeller lifts it off here
@@ -410,8 +410,10 @@ export function wingStrikes(car, obstacles, world) {
       if (!reach || world.brokenProps?.has(o.id)) continue;
       const t = clamp(((o.x - root[0]) * dx + (o.z - root[2]) * dz) / length2, 0, 1);
       const px = root[0] + dx * t, pz = root[2] + dz * t, py = root[1] + (tip[1] - root[1]) * t;
+      // A pine's canopy is a cone: a wing passing over its tip misses it.
+      const up = clamp((py - o.y) / (o.h || 1), 0, 1), canopy = o.type === 'tree' ? reach * Math.min(1, 1.3 * (1 - up)) : reach;
       const gap = Math.hypot(px - o.x, pz - o.z);
-      if (gap > reach || py < o.y - .3 || py > o.y + o.h) continue;
+      if (gap > canopy || py < o.y - .3 || py > o.y + o.h) continue;
       const speed = Math.hypot(car.vx, car.vy, car.vz), heavy = o.type === 'boulder';
       const broke = speed >= (heavy ? 26 : 12) && Boolean(world.breakProp);
       if (broke) world.breakProp(o, car.vx, car.vz);
@@ -424,7 +426,7 @@ export function wingStrikes(car, obstacles, world) {
       const turn = yaw * .5, c = Math.cos(turn), sn = Math.sin(turn); // the flight path bends a little too
       [car.vx, car.vz] = [car.vx * c + car.vz * sn, -car.vx * sn + car.vz * c];
       if (!broke) { // shoved clear of an unbroken boulder
-        const away = Math.hypot(px - o.x, pz - o.z) || 1, push = reach - gap + .05;
+        const away = Math.hypot(px - o.x, pz - o.z) || 1, push = canopy - gap + .05;
         car.x += (px - o.x) / away * push; car.z += (pz - o.z) / away * push;
       }
       car.impact = Math.max(car.impact, heavy ? .3 : .18);

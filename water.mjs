@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { waterWave, lakeExtent } from './lakes.mjs?v=rivers-1';
+import { waterWave, lakeExtent } from './lakes.mjs?v=classes-2';
 
 // A small tileable wave texture, generated once (no download): R/G hold the
 // surface slope from a sum of periodic waves, B a soft noise used to break up

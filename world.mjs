@@ -1,12 +1,12 @@
 // Shared, deterministic world and vehicle simulation. No browser or renderer required.
-import { createLakes, lakeRadius } from './lakes.mjs?v=rivers-1';
-import { createRoads, ROAD_HALF, ROAD_REACH, ROAD_CELL } from './roads.mjs?v=roadside-1';
+import { createLakes, lakeRadius } from './lakes.mjs?v=classes-2';
+import { createRoads, ROAD_HALF, ROAD_REACH, ROAD_CELL } from './roads.mjs?v=classes-2';
 import { createRivers } from './rivers.mjs?v=rivers-1';
 import { stepAmphibious } from './amphibious-motion.mjs?v=physics-16';
 import { controlAxis } from './controls.mjs?v=slider-1';
 import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-16';
 import { clamp, mix, smoothstep, hash, random, noise } from './noise.mjs?v=terrain-1';
-import { createLandforms, TREELINE, SNOW_LINE } from './landforms.mjs?v=terrain-1';
+import { createLandforms, TREELINE, SNOW_LINE } from './landforms.mjs?v=classes-2';
 export { clamp, mix, smoothstep, hash, random, noise };
 export const CHUNK = 96;
 export const GRID = 4;
@@ -16,6 +16,16 @@ export const FEATURE_SPACING = CHUNK * 3;
 export const SPEED_LIMIT = 92; // Downhill cap; level-road cruising reaches ~300 km/h.
 // Scenery models the world picks by place, in the nature library's order.
 export const VARIANT = { tree: { snow: 2, stunted: 3, dead: 4 }, bush: { meadow: 0, desert: 1, juniper: 2 }, outcrop: { granite: 0, sandstone: 1, slab: 2 } };
+// Each terrain grid square is split along the diagonal whose two corners are
+// nearer in height (a–d or b–c, for corners a (0,0), b (1,0), c (0,1),
+// d (1,1)), so ridges, gullies and cliff rims follow triangle edges instead
+// of stair-stepping across them. The weights of a, b, c, d at (u, v) in the
+// square: the rendered mesh, the physics and the grass all use this.
+export function cellWeights(u, v, a, b, c, d) {
+  if (Math.abs(a - d) < Math.abs(b - c)) return u >= v ? [1 - u, u - v, 0, v] : [1 - v, 0, v - u, u];
+  return u + v <= 1 ? [1 - u - v, u, v, 0] : [0, 1 - v, 1 - u, u + v - 1];
+}
+export const splitsAlongAD = (a, b, c, d) => Math.abs(a - d) < Math.abs(b - c);
 export function createWorld(seed) {
   const land = createLandforms(seed);
   // The natural land, before roads and ramps shape it: lakes sit in it and
@@ -26,7 +36,7 @@ export function createWorld(seed) {
   // Rivers feed the seas (rivers.mjs); roads cross them where they are narrow.
   const rivers = createRivers({ seed, ground: natural, wet, seasNear: lakes.seasNear, mountainAt: land.mountainAt });
   const riverCost = (x, z) => { const r = rivers.riverAt(x, z); return r && r.d < r.width / 2 + 12 ? 6 : 0; };
-  const roads = createRoads({ seed, ground: natural, mountainAt: land.mountainAt, wet, riverCost, riverAt: rivers.riverAt });
+  const roads = createRoads({ seed, ground: natural, mountainAt: land.mountainAt, woodlandAt, wet, riverCost, riverAt: rivers.riverAt });
   const roadAt = roads.roadAt;
   // The first road runs north from the start; the first ramps and the first
   // lookout stand beside it.
@@ -40,7 +50,15 @@ export function createWorld(seed) {
     if (brokenProps.has(prop.id)) return;
     brokenProps.add(prop.id); breakEvents.push({ ...prop, vx, vz });
   }
-  const startJump = besideStart(68, -19), startTower = besideStart(145, 37), startRoll = besideStart(225, 24);
+  // The first ramp's run-up (and the ramp) keeps clear of every road and its
+  // shoulders: a highway's embankment across it would throw the car before
+  // the lip. Failing a clear spot near 68 m, it stays at 68 m.
+  const runUpClear = spot => {
+    for (let along = -40; along <= 34; along += 3) { const p = featurePoint(spot, 0, along); if (roads.networkAt(p.x, p.z).d < 12) return false; }
+    return true;
+  };
+  const jumpSpots = [68, 56, 80, 44, 92, 104].flatMap(s => [-1, 1].map(side => besideStart(s, side * (19 + (starterRoad?.extra || 0)))));
+  const startJump = jumpSpots.find(runUpClear) || besideStart(68, -19), startTower = besideStart(145, 37), startRoll = besideStart(225, 24);
   const starterRamp = { id: 'first-jump', type: 'ramp', x: startJump.x, z: startJump.z, heading: startJump.heading, width: 10, length: 24, rise: 5.2, back: 10 };
   const starterTower = { id: 'first-lookout', type: 'lookout', x: startTower.x, z: startTower.z, heading: startTower.heading + .15 };
   const twistRamp = { id: 'first-roll', type: 'ramp', x: startRoll.x, z: startRoll.z, heading: startRoll.heading, width: 12, length: 30, rise: 8, back: 14, twist: -1 };
@@ -49,19 +67,21 @@ export function createWorld(seed) {
     if (featureCache.has(key)) return featureCache.get(key);
     const rng = random((hash(cx, cz, seed + 303) * 4294967296) >>> 0);
     let x = (cx + .5) * FEATURE_SPACING + (rng() - .5) * 60, z = (cz + .5) * FEATURE_SPACING + (rng() - .5) * 60;
-    // Sites stand beside a road when one passes within 150 m: 36 m off it, on
-    // either side. Away from the roads only a few camps and lookouts remain.
+    // Sites stand beside a road when one passes within 150 m, on either side:
+    // ramps 36 m off it, camps and lookouts 70–150 m back up a lane of their
+    // own (a spur). Away from the roads only a few camps and lookouts remain.
     const road = roads.nearestRoad(x, z, 150), side = hash(cx, cz, seed + 306) < .5 ? -1 : 1, wild = !road && hash(cx, cz, seed + 307) > .25;
-    if (road) { x = road.x + Math.cos(road.heading) * 36 * side; z = road.z - Math.sin(road.heading) * 36 * side; }
+    const kind = rng(), back = kind < .58 ? 36 : 70 + 80 * hash(cx, cz, seed + 308);
+    if (road) { x = road.x + Math.cos(road.heading) * back * side; z = road.z - Math.sin(road.heading) * back * side; }
     // Never on another road, nor crowding the cell's neighbours.
-    if (roadAt(x, z).d < 30) { x = road ? road.x + Math.cos(road.heading) * 60 * side : x; z = road ? road.z - Math.sin(road.heading) * 60 * side : z; }
+    if (roads.networkAt(x, z).d < 30) { x = road ? road.x + Math.cos(road.heading) * 60 * side : x; z = road ? road.z - Math.sin(road.heading) * 60 * side : z; }
     x = clamp(x, cx * FEATURE_SPACING + 40, (cx + 1) * FEATURE_SPACING - 40);
     z = clamp(z, cz * FEATURE_SPACING + 40, (cz + 1) * FEATURE_SPACING - 40);
     // Ramps, camps and lookouts need fairly level ground: none on a mountain
     // side, a mesa edge or a dune field's steep faces.
     let lo = Infinity, hi = -Infinity;
     for (const [dx, dz] of [[0, 0], [28, 0], [-28, 0], [0, 28], [0, -28]]) { const h = land.sample(x + dx, z + dz).height; lo = Math.min(lo, h); hi = Math.max(hi, h); }
-    const kind = rng(), type = hi - lo > 9 || wild || roadAt(x, z).d < 25 ? 'none' : !road ? (kind < .6 ? 'camp' : 'lookout') : kind < .58 ? 'ramp' : kind < .82 ? 'camp' : 'lookout';
+    const type = hi - lo > 9 || wild || roads.networkAt(x, z).d < 25 ? 'none' : !road ? (kind < .6 ? 'camp' : 'lookout') : kind < .58 ? 'ramp' : kind < .82 ? 'camp' : 'lookout';
     const heading = (road ? road.heading : rng() * Math.PI * 2) + (rng() - .5) * .6;
     const feature = { id: `site:${cx},${cz}`, type, x, z, heading, width: 9 + rng() * 3, length: 22 + rng() * 8, rise: 4.5 + rng() * 3, back: 12 };
     if (type === 'ramp' && hash(cx, cz, seed + 804) < .4) {
@@ -73,6 +93,43 @@ export function createWorld(seed) {
     featureCache.set(key, feature);
     return feature;
   }
+  // Spur roads (roads.mjs): a short drive from the road to each camp and
+  // lookout beside one, and in places a slipway down into a lake.
+  const spurSpecs = new Map();
+  function siteSpur(f) {
+    if (spurSpecs.has(f.id)) return spurSpecs.get(f.id);
+    let spec = null;
+    if (f.type === 'camp' || f.type === 'lookout') {
+      const road = roads.nearestRoad(f.x, f.z, 180), d = road?.d;
+      // It ends 10 m short of the building, facing it.
+      if (d > 20 && d < 170) spec = { id: `spur:${f.id}`, from: { x: road.x, z: road.z }, to: { x: f.x + (road.x - f.x) / d * 10, z: f.z + (road.z - f.z) / d * 10 }, water: null, kind: f.type === 'camp' ? 'dirt' : 'lane' };
+    }
+    spurSpecs.set(f.id, spec);
+    return spec;
+  }
+  function lakeSpur(lake) {
+    if (spurSpecs.has(lake.id)) return spurSpecs.get(lake.id);
+    let spec = null;
+    const reach = Math.max(lake.rx, lake.rz) + 420, road = hash([...lake.id].reduce((h, c) => h * 31 + c.charCodeAt(0) | 0, 7), 1, seed + 4300) < .75 && roads.nearestRoad(lake.x, lake.z, reach);
+    if (road) {
+      // From the nearest road straight toward the middle, to the shore and 24 m on into the water.
+      const d = Math.hypot(lake.x - road.x, lake.z - road.z), ux = (lake.x - road.x) / d, uz = (lake.z - road.z) / d;
+      let t = 0;
+      while (t < d && lakeRadius(lake, road.x + ux * t, road.z + uz * t) > 1) t += 2;
+      if (t > 12 && t < 400) spec = { id: `spur:${lake.id}`, from: { x: road.x, z: road.z }, to: { x: road.x + ux * (t + 24), z: road.z + uz * (t + 24) }, water: lake.level, kind: 'lane' };
+    }
+    spurSpecs.set(lake.id, spec);
+    return spec;
+  }
+  roads.setSpurs((x0, z0, x1, z1) => {
+    const list = [];
+    for (let cx = Math.floor((x0 - 100) / FEATURE_SPACING); cx <= Math.floor((x1 + 100) / FEATURE_SPACING); cx++) {
+      for (let cz = Math.floor((z0 - 100) / FEATURE_SPACING); cz <= Math.floor((z1 + 100) / FEATURE_SPACING); cz++) list.push(siteSpur(featureAtCell(cx, cz)));
+    }
+    if (starterTower.x > x0 - 100 && starterTower.x < x1 + 100 && starterTower.z > z0 - 100 && starterTower.z < z1 + 100) list.push(siteSpur(starterTower));
+    for (const lake of lakes.near((x0 + x1) / 2, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0) / 2 + 450)) if (!lake.sea) list.push(lakeSpur(lake));
+    return list.filter(Boolean);
+  });
   function featuresNear(x, z, radius = 190) {
     const result = [starterRamp, starterTower, twistRamp];
     for (let cx = Math.floor((x - radius) / FEATURE_SPACING); cx <= Math.floor((x + radius) / FEATURE_SPACING); cx++) {
@@ -99,8 +156,10 @@ export function createWorld(seed) {
     }
     return null;
   }
-  function reserved(x, z) {
-    return featuresNear(x, z, 275).some(f => {
+  // (A caller testing many points in one area can pass the features near
+  // all of them, looked up once.)
+  function reserved(x, z, features = featuresNear(x, z, 275)) {
+    return features.some(f => {
       const p = featureLocal(f, x, z);
       return f.type === 'ramp' ? Math.abs(p.across) < f.width / 2 + 9 && p.along > -30 && p.along < f.length + 220 : Math.hypot(p.across, p.along) < 18;
     });
@@ -117,10 +176,12 @@ export function createWorld(seed) {
     if (road.d < ROAD_REACH && !road.bridge) {
       // How firmly each road holds the land here, and (more gently, so roads
       // drawing together ease toward one level) how much its level counts.
-      const reach = (level, d) => 1 - smoothstep(8, 9 + clamp(Math.abs(level - h) * 1.5, 3, 45), d), weight = d => 1 - smoothstep(4, 20, d);
+      const reach = (level, d) => 1 - smoothstep(8, 9 + clamp(Math.abs(level - h) * 2.2, 3, 50), d), weight = d => 1 - smoothstep(4, 20, d);
       const near = road.od < ROAD_REACH, other = near ? weight(road.od) : 0, own = weight(road.d);
       h += ((road.level * own + road.olevel * other) / (own + other || 1) - h) * Math.max(reach(road.level, road.d), near ? reach(road.olevel, road.od) : 0);
     }
+    // Dirt tracks are bumpy: up to 15 cm of rise and fall every 10 m or so.
+    if (road.kind === 'dirt' && road.d < ROAD_HALF + 2) h += (noise(x * .1, z * .1, seed + 4400) - .5) * .32 * (1 - smoothstep(ROAD_HALF - 1, ROAD_HALF + 2, road.d));
     // Ramps rise out of the land.
     const feature = featureAtCell(Math.floor(x / FEATURE_SPACING), Math.floor(z / FEATURE_SPACING));
     return h + rampLift(feature, x, z) + rampLift(starterRamp, x, z) + rampLift(twistRamp, x, z);
@@ -175,8 +236,8 @@ export function createWorld(seed) {
   function groundSurface(x, z) {
     const ix = Math.floor(x / GRID) * GRID, iz = Math.floor(z / GRID) * GRID;
     const u = (x - ix) / GRID, v = (z - iz) / GRID;
-    const a = height(ix, iz), b = height(ix + GRID, iz), c = height(ix, iz + GRID), d = height(ix + GRID, iz + GRID);
-    return u + v <= 1 ? a + (b - a) * u + (c - a) * v : d + (c - d) * (1 - u) + (b - d) * (1 - v);
+    const a = height(ix, iz), b = height(ix + GRID, iz), c = height(ix, iz + GRID), d = height(ix + GRID, iz + GRID), w = cellWeights(u, v, a, b, c, d);
+    return a * w[0] + b * w[1] + c * w[2] + d * w[3];
   }
   // What a car drives on: the ground, or a bridge deck over a river (unless
   // whatever asks is well below the deck, like a boat passing beneath; y is
@@ -284,7 +345,7 @@ export function groundAt(world, x, z, heading, y) {
 export function createVehicle(world, x = 0, z = 0, heading = 0) {
   const g = groundAt(world, x, z, heading);
   const water = world.waterAt?.(x, z), floating = Boolean(water && water.depth > .9);
-  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, crashFold: false, alpha: 0, shadow: 0, shadowVy: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
+  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, onDirt: false, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, crashFold: false, alpha: 0, shadow: 0, shadowVy: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
 }
 export function resolveObstacles(car, obstacles, world) {
   for (let pass = 0; pass < 3; pass++) for (const o of obstacles) {
@@ -308,7 +369,7 @@ export function resolveObstacles(car, obstacles, world) {
       continue;
     }
     // Signs fold over at anything above a crawl, barely slowing the car.
-    if (o.type === 'sign' && world?.breakProp && impactSpeed > 1.5) {
+    if (o.type === 'sign' && world?.breakProp && impactSpeed > .5) {
       world.breakProp(o, car.vx, car.vz); car.smashed++;
       car.vx *= .97; car.vz *= .97; car.impact = Math.max(car.impact, .08);
       continue;
@@ -318,6 +379,13 @@ export function resolveObstacles(car, obstacles, world) {
     const approach = car.vx * nx + car.vz * nz;
     if (approach < 0) { car.vx -= nx * approach * 1.08; car.vz -= nz * approach * 1.08; car.impact = Math.max(car.impact, -approach * .012); }
   }
+}
+function besideRamp(world, x, z) {
+  return (world.featuresNear?.(x, z, 60) || []).some(f => {
+    if (f.type !== 'ramp') return false;
+    const p = featureLocal(f, x, z);
+    return Math.abs(p.across) < f.width / 2 + 8 && p.along > -8 && p.along < f.length + (f.back || 0) + 8;
+  });
 }
 function launchRoll(car, ramp, speed) {
   if (!ramp?.twist || speed < 12) return;
@@ -347,33 +415,35 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   }
   const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
   const forward = car.vx * fx + car.vz * fz, speed = Math.abs(forward);
-  const roadDistance = world.roadAt(car.x, car.z).d;
+  const road = world.roadAt(car.x, car.z), roadDistance = road.d;
   car.onRoad = roadDistance < ROAD_HALF;
-  const highway = 1 - smoothstep(ROAD_HALF - 1, ROAD_HALF + 3, roadDistance);
+  // A dirt track is slower than tarmac and looser than grass.
+  car.onDirt = car.onRoad && road.kind === 'dirt';
+  const highway = (1 - smoothstep(ROAD_HALF - 1, ROAD_HALF + 3, roadDistance)) * (car.onDirt ? .45 : 1);
   const authority = car.grounded ? 1 : .16;
   // Slopes: climbing lowers the top speed (the engine runs out of power), and
-  // on faces steeper than about 40° the tyres lose their grip altogether, so
+  // on faces steeper than about 47° the tyres lose their grip altogether, so
   // the car slides back rather than racing up a mountainside.
   const slope = car.grounded ? world.gradient(car.x, car.z) : { x: 0, z: 0 }, rise = slope.x * fx + slope.z * fz;
-  const climbing = car.grounded ? smoothstep(.15, .7, rise * Math.sign(forward || throttle || 1)) : 0;
-  const power = 1 - .6 * climbing;
+  const climbing = car.grounded ? smoothstep(.15, .9, rise * Math.sign(forward || throttle || 1)) : 0;
+  const power = 1 - .62 * climbing;
   let acceleration = 0;
   if (throttle > 0) acceleration = throttle * (forward < -.5 ? 45 : 34 * (1 - smoothstep(mix(56, 72, highway) * power, mix(72, 89.5, highway) * power, forward)));
   if (throttle < 0) acceleration = -throttle * (forward > .5 ? -55 : -18 * (1 - smoothstep(10, 16, -forward)));
   const uphillPush = rise * Math.sign(acceleration);
-  if (car.grounded && uphillPush > 0) acceleration *= 1 - .9 * smoothstep(.5, .95, uphillPush);
+  if (car.grounded && uphillPush > 0) acceleration *= 1 - .92 * smoothstep(.75, 1.2, uphillPush);
   car.vx += fx * acceleration * authority * dt; car.vz += fz * acceleration * authority * dt;
   const targetSteer = controlAxis(input.steer, input.left, input.right);
   car.steer = mix(car.steer, targetSteer, 1 - Math.exp(-10 * dt));
   car.heading += car.steer * (brake ? 2.1 : 1.7) * Math.min(speed / 5, 1) / (1 + speed * .032) * Math.sign(forward || 1) * authority * dt;
   const nx = Math.sin(car.heading), nz = Math.cos(car.heading), along = car.vx * nx + car.vz * nz;
-  const grip = car.grounded ? (brake ? 1.9 : car.onRoad ? 12 : 8) : .2;
+  const grip = car.grounded ? (brake ? 1.9 : car.onDirt ? 6.5 : car.onRoad ? 12 : 8) : .2;
   const decay = Math.exp(-grip * dt);
   car.vx = nx * along + (car.vx - nx * along) * decay; car.vz = nz * along + (car.vz - nz * along) * decay;
-  const drag = Math.exp(-(car.grounded ? brake ? 1.6 : car.onRoad ? .11 : .19 : .015) * dt);
+  const drag = Math.exp(-(car.grounded ? brake ? 1.6 : car.onDirt ? .15 : car.onRoad ? .11 : .19 : .015) * dt);
   car.vx *= drag; car.vz *= drag;
   if (car.grounded) {
-    const g = slope, steep = 8 + 10 * smoothstep(.4, 1, Math.hypot(g.x, g.z));
+    const g = slope, steep = 7 + 10 * smoothstep(.6, 1.3, Math.hypot(g.x, g.z));
     // Hill hold at rest; on gentle ground the engine comfortably exceeds
     // downhill gravity, and steep faces pull harder.
     if (throttle || speed > .5) { car.vx -= g.x * steep * dt; car.vz -= g.z * steep * dt; }
@@ -385,7 +455,25 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   car.x += car.vx * dt; car.z += car.vz * dt;
   if (!car.grounded) { car.vy -= 22 * dt; car.y += car.vy * dt; car.airtime += dt; car.airDistance += Math.hypot(car.vx, car.vz) * dt; car.bestAir = Math.max(car.bestAir, car.airtime); }
   resolveObstacles(car, obstacles, world);
-  const g = groundAt(world, car.x, car.z, car.heading, car.y);
+  let g = groundAt(world, car.x, car.z, car.heading, car.y);
+  // A face steeper than about 52° is a wall, not a slope: driving into one
+  // stops the car (it slides along it) rather than lifting it, which would
+  // throw it high off the top. Ramps keep their steep backs and sides to
+  // launch from. (Landing counts: no setting down onto a face to be thrown off it.)
+  // The climb is measured under the leading wheels (the wheel-averaged ground
+  // only sees part of it while the others are still on the flat), and a step
+  // ahead, so a wheel meeting the foot of a face mid-step is held there too.
+  const moved = Math.hypot(car.x - oldX, car.z - oldZ);
+  if ((car.grounded || car.y <= g.y) && moved > 1e-4) {
+    const ax = (car.x - oldX) / moved * 1.36, az = (car.z - oldZ) / moved * 1.36, aheadX = 2 * car.x - oldX + ax, aheadZ = 2 * car.z - oldZ + az;
+    const climb = world.surface(aheadX, aheadZ, car.y) - world.surface(oldX + ax, oldZ + az, car.y);
+    if (climb > 1e-3 && climb > moved * 2 * 1.3 && !besideRamp(world, car.x, car.z)) {
+      const up = world.gradient(aheadX, aheadZ), steepness = Math.hypot(up.x, up.z) || 1, nx = up.x / steepness, nz = up.z / steepness, into = car.vx * nx + car.vz * nz;
+      car.x = oldX; car.z = oldZ;
+      if (into > 0) { car.vx -= nx * into; car.vz -= nz * into; car.impact = Math.max(car.impact, Math.min(.3, into * .012)); }
+      g = groundAt(world, car.x, car.z, car.heading, car.y);
+    }
+  }
   const ramp = world.rampAt?.(car.x, car.z);
   const rampPosition = ramp && featureLocal(ramp, car.x, car.z);
   const surfaceVy = clamp((g.y - car.groundY) / dt, -32, 32);
@@ -412,7 +500,12 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
       } else car.shadow = 0;
       if (car.shadow > (car.landLock ? .05 : .025)) {
         car.grounded = false; car.airtime = 0; car.airDistance = 0; car.airRoll = 0;
-        car.vy = clamp(car.shadowVy, -3, 28); car.y = g.y + car.shadow; car.shadow = 0; car.shadowVy = 0;
+        // Off the land's own crests, taken slowly, the suspension soaks up half
+        // the climb (a bank at a crawl is no jump); from about 100 km/h, and
+        // off ramps, the car leaves with all of it.
+        const fast = besideRamp(world, car.x, car.z) ? 1 : smoothstep(12, 28, horizontal);
+        const lift = Math.min(mix(3, 28, fast), Math.max(0, car.shadowVy) * mix(.5, 1, fast) + Math.min(0, car.shadowVy));
+        car.vy = clamp(car.shadowVy, -3, lift); car.y = g.y + car.shadow; car.shadow = 0; car.shadowVy = 0;
         launchRoll(car, ramp, Math.abs(rampSpeed));
       } else { car.y = g.y; car.vy = surfaceVy; }
     }

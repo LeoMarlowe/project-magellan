@@ -1,9 +1,10 @@
-import { createTerrain } from './terrain.mjs?v=rivers-1';
+import { createTerrain } from './terrain.mjs?v=classes-3';
 import { createWater } from './water.mjs?v=rivers-1';
-import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=physics-16';
+import { FAR_SIZE, FAR_VIEW, NEAR_VIEW, ULTRA_SIZE, ULTRA_VIEW, ULTRA_BLEND_START, ULTRA_BLEND_END, farIndices, farCoverage, ultraIndices, ultraCoverage } from './streaming-layout.mjs?v=classes-3';
 import { loadVehicleModel } from './vehicle-model.mjs?v=flight-1';
 import { createProfiler } from './profiling.mjs?v=timing-1';
 import { createDebris } from './debris.mjs?v=perf-1';
+import { createDust } from './dust.mjs?v=classes-2';
 import { createVehiclePresentation } from './vehicle-presentation.mjs?v=physics-16';
 import { followTarget, followValue } from './camera-motion.mjs?v=grass-1';
 import { createTreeBreakage } from './tree-breakage.mjs?v=nature-1';
@@ -23,10 +24,11 @@ import { createSky } from './sky.mjs?v=clouds-8';
 import { daylight, advanceClock, clockLabel, startHour } from './daylight.mjs?v=day-3';
 import { createWeatherEffects, toneMappedHorizon } from './weather-effects.mjs?v=day-1';
 import * as THREE from 'three';
-import { CHUNK, GRID, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=roadside-1';
-import { SNOW_LINE } from './landforms.mjs?v=terrain-1';
-import { ROAD_MAP } from './roads.mjs?v=roadside-1';
+import { CHUNK, GRID, ROAD_HALF, FIXED_DT, featurePoint, clamp, mix, smoothstep, hash, createWorld, createVehicle, stepVehicle, recoverVehicle, groundAt } from './world.mjs?v=classes-2';
+import { SNOW_LINE } from './landforms.mjs?v=classes-2';
+import { ROAD_MAP } from './roads.mjs?v=classes-2';
 import { buildLandmark, cloneOwnedGeometry, buildLandmarkStandins, landmarkSwapDistance } from './scenery.mjs?v=standin-5';
+import { createMotionBlur } from './motion-blur.mjs?v=blur-1';
 
 const $ = id => document.getElementById(id);
 const coarse = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
@@ -89,6 +91,12 @@ else if (testMode) settings.quality = coarse ? 'medium' : 'high';
 if (!QUALITY_PRESETS.includes(settings.quality)) settings.quality = 'auto';
 settings.sensitivity = clamp(Number(settings.sensitivity) || 1, .5, 1.5);
 settings.tilt = coarse && settings.tilt === true;
+// Motion blur: on by default on computers (phones keep the GPU time for the
+// rest), off in tests unless ?blur=1.
+const blurParam = new URLSearchParams(location.search).get('blur');
+if (blurParam !== null) settings.motionBlur = blurParam === '1';
+else if (testMode) settings.motionBlur = false;
+else if (typeof settings.motionBlur !== 'boolean') settings.motionBlur = !coarse;
 // Flight always starts on the full controls; T switches for this visit only
 // (an older build remembered simple controls).
 delete settings.simpleFlight;
@@ -116,7 +124,10 @@ const flightKeys = {
 const flightTouch = { throttleUp: 'up', throttleDown: 'down', pitchUp: 'jump', pitchDown: 'brake', rollLeft: 'left', rollRight: 'right' };
 
 installSunShadowFade();
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+// On computers the scene is multisampled in the motion blur's target (see
+// motion-blur.mjs), so the screen needn't be; phones draw straight to it.
+const renderer = new THREE.WebGLRenderer({ antialias: coarse, powerPreference: 'high-performance' });
+const screenMultisampled = renderer.getContext().getContextAttributes().antialias;
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, levels[qualityLevel].pixelRatio));
 renderer.shadowMap.enabled = true;
@@ -144,6 +155,15 @@ scene.background = skyColor;
 const FOG_COLOR = new THREE.Color('#c8d1d3');
 scene.fog = new THREE.Fog(FOG_COLOR, 350, 1450);
 const camera = new THREE.PerspectiveCamera(57, innerWidth / innerHeight, .1, 6400);
+const motionBlur = createMotionBlur(renderer);
+// The blur's target is drawn exactly as the screen is, except that three.js
+// hands over the fog and the clear (sky) colour in linear terms there: give
+// them their on-screen values in it too.
+for (const color of [scene.fog.color, skyColor]) {
+  const getRGB = color.getRGB.bind(color);
+  color.getRGB = (target, colorSpace) => getRGB(target, motionBlur.drawing ? THREE.SRGBColorSpace : colorSpace);
+}
+let drawStats = renderer.info.render; // the scene's draw calls and triangles this frame
 const hemisphere = new THREE.HemisphereLight('#e4efed', '#787257', 1.6);
 scene.add(hemisphere);
 const sun = new THREE.DirectionalLight('#fff0d2', 2.5);
@@ -264,7 +284,7 @@ function updateWeather(dt) {
   hemisphere.intensity = light.hemiIntensity * (1 + .12 * cover);
   surfaceLight.setRGB(...light.surfaceLight).multiplyScalar(1 - .25 * cover);
   waterSystem.setSky(skyTop, skyColor, (1 - .85 * cover) * Math.min(1, light.keyIntensity / 2.5 + light.night * .3), sunDirection, sun.color, skyPalette.cloudLit, surfaceLight);
-  weatherFx.setLight(surfaceLight);
+  weatherFx.setLight(surfaceLight); dust.setLight(surfaceLight);
   dayLight = light;
   // Rain and snow drift with a little wind, relative to the moving camera.
   if (step > 0) weather.cameraVelocity.subVectors(camera.position, weather.lastCamera).divideScalar(step);
@@ -297,7 +317,7 @@ function terrainSurface(roadMap, size, roadInfo = null) {
   const texture = roadTexture(roadMap), detail = roadInfo ? roadTexture(roadInfo) : blankRoadInfo;
   const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
   material.onBeforeCompile = shader => { compileTerrain(shader); Object.assign(shader.uniforms, { uRoadMap: { value: texture }, uRoadInfo: { value: detail }, uRoadSize: { value: size } }); };
-  material.customProgramCacheKey = () => 'terrain-roads-2';
+  material.customProgramCacheKey = () => 'terrain-roads-3';
   material.userData.roadMaps = roadInfo ? [texture, detail] : [texture];
   return material;
 }
@@ -339,7 +359,12 @@ function compileTerrain(shader) {
     // and (near chunks) solid lines, dips and junctions.
     vec2 p=vGroundXZ;
     vec4 road=texture2D(uRoadMap,vRoadUV), info=texture2D(uRoadInfo,vRoadUV);
-    float d=road.r*12.75, dashes=road.g*2.0-1.0, otherRoad=road.b*25.5, lateral=(road.a*2.0-1.0)*1.6, junction=(info.b*255.0-128.0)*.05;
+    float d=road.r*12.75, dashes=road.g*2.0-1.0, otherRoad=road.b*25.5, lateral=(road.a*2.0-1.0)*4.0, junction=(info.b*255.0-128.0)*.05;
+    // The road's kind and its centre line (roads.mjs): dashed, solid, a
+    // highway (a solid double line and dashed lanes), a roundabout's ring
+    // (none), or a dirt track.
+    float mode=info.r*255.0, solidLine=smoothstep(28.0,36.0,mode)*(1.0-smoothstep(92.0,100.0,mode)), highway=smoothstep(92.0,100.0,mode)*(1.0-smoothstep(156.0,164.0,mode));
+    float lineless=smoothstep(156.0,164.0,mode), dirt=smoothstep(220.0,228.0,mode);
     // Inside a junction the roads join with rounded corners (a smooth union
     // of their distances), and the edge lines follow the curve.
     float zone=1.0-smoothstep(-.4,0.0,junction), join=clamp(.5+.1*(otherRoad-d),0.0,1.0), rd=mix(d,mix(otherRoad,d,join)-5.0*join*(1.0-join),zone);
@@ -371,9 +396,9 @@ function compileTerrain(shader) {
       float rag=((smoothGrain(p*.9)-.5)*1.1*(.4+.6*still)+(smoothGrain(p*3.1+2.0)-.5)*.5*still)*fine;
       shoulder=1.0-smoothstep(5.7+rag,6.7+rag+uCalm*.8,rd);
       vec3 gravel=vec3(.30,.28,.235)*(.82+.36*still*mix(smoothGrain(p*6.5+11.0),.5,1.0-fine));
-      diffuseColor.rgb=mix(base,mix(gravel,base,max(sand*.75,snow*.9)),shoulder*.8);
+      diffuseColor.rgb=mix(base,mix(gravel,base,max(sand*.75,snow*.9)),shoulder*.8*(1.0-.7*dirt));
       // Sand drifts in over the edges in the desert.
-      float drift=sand*(smoothGrain(p*.42+5.0)*.7+(.5+(smoothGrain(p*1.6)-.5)*still)*.3), edgeAt=4.65-1.8*drift*drift*drift, soft=aa+uCalm*sand*.7;
+      float drift=sand*(smoothGrain(p*.42+5.0)*.7+(.5+(smoothGrain(p*1.6)-.5)*still)*.3), edgeAt=4.65-1.8*drift*drift*drift-dirt*max(rag,0.0)*.8, soft=aa+uCalm*sand*.7+dirt*.15;
       float asphalt=1.0-smoothstep(edgeAt-soft,edgeAt+soft,rd);
       // Dark when new, paler with age, sun-bleached in the desert; 11 cm
       // grains, smoothly blended (hard-edged cells flicker at any range).
@@ -389,6 +414,15 @@ function compileTerrain(shader) {
       // Grey slush along the edges where snow lies.
       float slush=snow*smoothstep(3.0,4.4,rd+(smoothGrain(p*.8)-.5)*1.4*(.4+.6*still));
       tarmac=mix(tarmac,vec3(.36,.36,.35),slush*.7)*(1.0-.42*uWet);
+      // A dirt track: packed earth (or sand, or trodden snow) with two ruts
+      // and a strip of the ground's own grass between them, wet to mud in rain.
+      if(dirt>0.0){
+        float ruts=exp(-pow((abs(lateral)-.85)/.28,2.0)), crown=1.0-smoothstep(.22,.42,abs(lateral));
+        vec3 earth=vec3(.31,.26,.19)*(.84+.32*still*mix(smoothGrain(p*5.3+2.0),.5,1.0-fine))*(1.0-.22*ruts);
+        earth=mix(earth,base*vec3(.92,.9,.86),max(sand*.8,snow*.75));
+        earth=mix(earth,base,crown*.55*(1.0-sand)*(1.0-snow));
+        tarmac=mix(tarmac,earth*(1.0-.35*uWet),dirt);
+      }
       diffuseColor.rgb=mix(diffuseColor.rgb,tarmac,asphalt);
       // Markings: edge lines (around a junction's corners), the centre line
       // (dashed, or a solid double line on bends and crests, ending before
@@ -396,11 +430,15 @@ function compileTerrain(shader) {
       float edge=(1.0-smoothstep(.065,.065+aa,abs(rd-4.13)))*mix(smoothstep(3.9,4.4,otherRoad),1.0,zone);
       float single=(1.0-smoothstep(.065,.065+aaSide,abs(lateral)))*smoothstep(-.06,.06,dashes);
       float twin=1.0-smoothstep(.05,.05+aaSide,abs(abs(lateral)-.16));
-      float centre=mix(single,twin,smoothstep(.4,.6,info.r))*smoothstep(.45,.45+aaJunction,junction)*(1.0-step(1.0,d));
+      float centre=mix(single,twin,max(solidLine,highway))*smoothstep(.45,.45+aaJunction,junction)*(1.0-step(1.0,d))*(1.0-lineless);
+      // A highway's lane lines, dashed, 3.45 m either side of its centre.
+      centre=max(centre,(1.0-smoothstep(.065,.065+aaSide,abs(abs(lateral)-3.45)))*smoothstep(-.06,.06,dashes)*highway*smoothstep(.45,.45+aaJunction,junction));
       float approach=info.a*2.0-1.0;
-      float stop=smoothstep(.5,.7,abs(approach))*smoothstep(.1,.2,lateral*sign(approach))*(1.0-smoothstep(4.2,4.2+aa,d))*(1.0-smoothstep(.25,.25+aaJunction,abs(junction-.27)));
+      // Solid at a stop; dashed where it gives way to a roundabout (flagged nearer 0).
+      float flag=abs(approach), giveWay=smoothstep(.35,.45,flag)*(1.0-smoothstep(.75,.85,flag)), dashedAcross=smoothstep(.42,.5,fract(d/.9))*(1.0-smoothstep(.92,1.0,fract(d/.9)));
+      float stop=(smoothstep(.8,.9,flag)+giveWay*dashedAcross)*smoothstep(.1,.2,lateral*sign(approach))*(1.0-smoothstep(4.2,4.2+aa,d))*(1.0-smoothstep(.25,.25+aaJunction,abs(junction-.27)));
       float wear=clamp(age*.55+(smoothGrain(p*2.3)-.5)*.6+(smoothGrain(p*9.0+3.0)-.5)*.4*fine*still,0.0,1.0);
-      float paint=max(edge*.72,max(centre*.88,stop*(1.0-.5*tracks)*.9))*(1.0-.6*wear)*(1.0-.55*patched)*(1.0-.8*slush)*asphalt;
+      float paint=max(edge*.72,max(centre*.88,stop*(1.0-.5*tracks)*.9))*(1.0-.6*wear)*(1.0-.55*patched)*(1.0-.8*slush)*asphalt*(1.0-dirt);
       vec3 paintColor=vec3(.77,.72,.56);
       diffuseColor.rgb=mix(diffuseColor.rgb,paintColor,paint);
       // Road paint is retroreflective: in the headlights it shines back.
@@ -409,7 +447,7 @@ function compileTerrain(shader) {
       float pool=smoothGrain(p*.33+9.0)*.65+smoothGrain(p*1.2)*.35+tracks*.12+smoothstep(3.6,4.6,d)*.1, pp=1.02-uWet*(.22+.5*info.g), ppw=foot*.4+.01;
       float puddle=smoothstep(pp-ppw,pp+ppw,pool)*asphalt*uWet;
       diffuseColor.rgb*=1.0-.5*puddle;
-      terrainRough=mix(1.0,mix(.92,mix(.34,.16,tracks),uWet),asphalt);
+      terrainRough=mix(1.0,mix(.92,mix(mix(.34,.16,tracks),.55,dirt),uWet),asphalt);
       terrainRough=mix(terrainRough,.05,puddle);
       terrainMirror=min(1.0,asphalt*uWet*(.32+.25*tracks)+puddle*.7);
     }
@@ -417,7 +455,10 @@ function compileTerrain(shader) {
     // with distance and where pixels outgrow it, and broad lush and dry
     // blotches as far as they can be shown, so the land past the grass tufts
     // doesn't read as a flat carpet.
-    float meadow=smoothstep(.015,.07,diffuseColor.g-max(diffuseColor.r,diffuseColor.b)*.9)*(1.0-shoulder);
+    // Only on ground that faces up: laid out by map position, these patterns
+    // would stretch into streaks down a steep face.
+    float facingUp=smoothstep(.55,.8,abs(normalize((vec4(vNormal,0.0)*viewMatrix).xyz).y));
+    float meadow=smoothstep(.015,.07,diffuseColor.g-max(diffuseColor.r,diffuseColor.b)*.9)*(1.0-shoulder)*facingUp;
     if(meadow>0.0){
       float seen=distance(cameraPosition,vGroundWorld);
       // The fine speckle has faded out by 140 m: only work it out closer.
@@ -446,6 +487,7 @@ let terrain = createTerrain(world);
 function geometryFromData(data) {
   const geometry = new THREE.BufferGeometry();
   for (const [name, array] of Object.entries(data)) {
+    if (name === 'split') continue; // kept by far tiles for their index lists
     if (name === 'index') geometry.setIndex(new THREE.BufferAttribute(array, 1));
     else geometry.setAttribute(name, new THREE.BufferAttribute(array, name === 'coarseHeight' || name === 'ultraHeight' ? 1 : 3));
   }
@@ -489,7 +531,7 @@ function softenScenery(mat, mode = 'fade') {
   // sparkles during motion and on browsers with different pixel ratios.
   // Keep alpha in the output (transparent), but retain opaque depth and
   // blending when MSAA is available. Fall back to ordinary alpha blending.
-  const multisampled = renderer.getContext().getContextAttributes().antialias;
+  const multisampled = screenMultisampled || renderer.capabilities.maxSamples >= 4;
   mat.transparent = true;
   mat.alphaToCoverage = multisampled;
   mat.blending = multisampled ? THREE.NoBlending : THREE.NormalBlending;
@@ -531,8 +573,13 @@ function softenScenery(mat, mode = 'fade') {
 const chunks = new Map();
 const view = NEAR_VIEW, farTiles = new Map(), ultraTiles = new Map();
 let lastCX = Infinity, lastCZ = Infinity;
-let worker, generation = 0, jobId = 0, jobs = [], pending = new Map(), completed = [];
-let loading = true, resumeAfterLoad = false, loadingStarted = bootStarted, streamError = null;
+// Two workers: one builds the near chunks around the car, the other
+// everything further out (far and horizon tiles, lakes). A horizon tile can
+// take a few hundred milliseconds; on one worker the ground just ahead
+// would queue behind it and arrive late.
+let workers = [], generation = 0, jobId = 0, jobs = [], pending = new Map(), completed = [];
+const laneOf = job => job.kind === 'near' ? 0 : 1, LANE_JOBS = 2; // jobs in flight per worker
+let loading = true, resumeAfterLoad = false, loadingStarted = bootStarted, streamError = null, roadsReady = false;
 // Distant water is rebuilt in the worker after every 500 m of travel.
 let distantAt = { x: Infinity, z: Infinity }, distantReady = false;
 function buildChunk({ cx, cz, ground: groundData, roadMap, roadInfo, river, bridges, props, features, roadside, grass: grassData }) {
@@ -624,14 +671,14 @@ function buildChunk({ cx, cz, ground: groundData, roadMap, roadInfo, river, brid
   }
   scene.add(group); chunks.set(`${cx},${cz}`, { cx, cz, group, ground, grassMesh, riverMesh, props, barriers: roadside?.obstacles || [], signs, features, propInstances });
 }
-// Signs knocked over: each tips about its foot the way the car was going,
-// falling faster and faster until it lies on the ground.
-const fallingSigns = [], fallenSigns = new Map(), SIGN_DOWN = 1.45;
+// Signs knocked over: each is thrown about 20° over at once, the way the car
+// was going, then falls faster and faster about its foot, flat in 0.4 s.
+const fallingSigns = [], fallenSigns = new Map(), SIGN_DOWN = 1.45, SIGN_KICK = .35;
 function updateFallingSigns(dt) {
   for (let i = fallingSigns.length - 1; i >= 0; i--) {
     const fall = fallingSigns[i]; fall.t += dt;
-    const k = Math.min(1, fall.t / .75);
-    fall.mesh.quaternion.setFromAxisAngle(fall.axis, SIGN_DOWN * k * k);
+    const k = Math.min(1, fall.t / .4);
+    fall.mesh.quaternion.setFromAxisAngle(fall.axis, SIGN_KICK + (SIGN_DOWN - SIGN_KICK) * k * k);
     if (k >= 1) fallingSigns.splice(i, 1);
   }
 }
@@ -642,7 +689,7 @@ function processBreakage() {
       const speed = Math.hypot(prop.vx, prop.vz) || 1, axis = new THREE.Vector3(prop.vz / speed, 0, -prop.vx / speed);
       fallenSigns.set(prop.id, axis);
       const mesh = chunk?.signs.get(prop.id);
-      if (mesh) fallingSigns.push({ mesh, axis, t: 0 });
+      if (mesh) { mesh.quaternion.setFromAxisAngle(axis, SIGN_KICK); fallingSigns.push({ mesh, axis, t: 0 }); }
       if (!muted && audio) audio.breaks.play('sign', speed, panAt(prop.x, prop.z));
       continue;
     }
@@ -813,7 +860,7 @@ function refreshUltraTile(tile) {
   const { cx: tx, cz: tz } = tile.userData, hasFar = (fx, fz) => farTiles.has(`${fx},${fz}`);
   const coverage = ultraCoverage(tx, tz, hasFar);
   if (tile.userData.coverage === coverage) return;
-  tile.geometry.setIndex(ultraIndices(tx, tz, hasFar));
+  tile.geometry.setIndex(ultraIndices(tx, tz, hasFar, tile.userData.split));
   tile.userData.coverage = coverage;
 }
 function refreshFarTile(tx, tz) {
@@ -822,7 +869,7 @@ function refreshFarTile(tx, tz) {
   const hasFine = (cx, cz) => chunks.get(`${cx},${cz}`)?.group.visible;
   const coverage = farCoverage(tx, tz, hasFine);
   if (tile.userData.coverage === coverage) return;
-  tile.geometry.setIndex(farIndices(tx, tz, hasFine));
+  tile.geometry.setIndex(farIndices(tx, tz, hasFine, tile.userData.split));
   tile.userData.coverage = coverage;
 }
 function desired(job) {
@@ -895,10 +942,10 @@ function drivable() {
   return true;
 }
 function processStreaming() {
-  if (!worker || streamError || natureError) return;
+  if (!workers.length || streamError || natureError) return;
   const budgetStart = performance.now();
   // Worker messages are installed within a frame budget, rather than all at
-  // once. At most three jobs are in flight, keeping memory and upload work bounded.
+  // once. At most two jobs per worker are in flight, keeping memory and upload work bounded.
   while (nature && completed.length && performance.now() - budgetStart < 4) {
     const job = completed.shift(); pending.delete(job.id);
     if (job.generation !== generation || !desired(job)) continue;
@@ -911,14 +958,14 @@ function processStreaming() {
       { const chunk = chunks.get(`${job.cx},${job.cz}`); chunk.group.visible = Math.max(Math.abs(job.cx - lastCX), Math.abs(job.cz - lastCZ)) <= view; if (chunk.riverMesh) chunk.riverMesh.visible = chunk.group.visible; }
       refreshFarTile(Math.floor(job.cx / 4), Math.floor(job.cz / 4));
     } else if (job.kind === 'ultra') {
-      const tile = new THREE.Mesh(geometryFromData(job.ground), terrainSurface(job.roadMap, ULTRA_SIZE));
+      const tile = new THREE.Mesh(geometryFromData(job.ground), terrainSurface(job.roadMap, ULTRA_SIZE, job.roadInfo));
       tile.position.set(job.cx * ULTRA_SIZE, 0, job.cz * ULTRA_SIZE);
-      tile.userData = { cx: job.cx, cz: job.cz };
+      tile.userData = { cx: job.cx, cz: job.cz, split: job.ground.split };
       ultraTiles.set(`${job.cx},${job.cz}`, tile); refreshUltraTile(tile); scene.add(tile);
     } else {
-      const tile = new THREE.Mesh(geometryFromData(job.ground), terrainSurface(job.roadMap, FAR_SIZE));
+      const tile = new THREE.Mesh(geometryFromData(job.ground), terrainSurface(job.roadMap, FAR_SIZE, job.roadInfo));
       tile.position.set(job.cx * FAR_SIZE, 0, job.cz * FAR_SIZE);
-      tile.userData = { cx: job.cx, cz: job.cz }; tile.receiveShadow = true;
+      tile.userData = { cx: job.cx, cz: job.cz, split: job.ground.split }; tile.receiveShadow = true;
       if (job.river) { tile.userData.river = waterSystem.riverMesh(job.river); scene.add(tile.userData.river); }
       farTiles.set(`${job.cx},${job.cz}`, tile); refreshFarTile(job.cx, job.cz); scene.add(tile);
       profiler.measure('propStandins', () => buildImpostors(tile, job.trees));
@@ -935,15 +982,20 @@ function processStreaming() {
     break;
   }
   profiler.record('streamInstall', performance.now() - budgetStart);
-  while (pending.size < 3 && jobs.length) {
-    const job = jobs.shift(); if (!desired(job)) continue;
-    pending.set(job.id, job); worker.postMessage(job);
+  const busy = [0, 0];
+  for (const job of pending.values()) busy[laneOf(job)]++;
+  for (let i = 0; i < jobs.length && (busy[0] < LANE_JOBS || busy[1] < LANE_JOBS);) {
+    const job = jobs[i], lane = laneOf(job);
+    if (!desired(job)) { jobs.splice(i, 1); continue; }
+    if (busy[lane] >= LANE_JOBS) { i++; continue; }
+    jobs.splice(i, 1); busy[lane]++; pending.set(job.id, job); workers[lane].postMessage(job);
   }
   if (loading) {
     const total = (view * 2 + 1) ** 2 + (FAR_VIEW * 2 + 1) ** 2 + (ULTRA_VIEW * 2 + 1) ** 2;
     const count = [...chunks.values()].filter(chunk => chunk.group.visible).length + farTiles.size + ultraTiles.size;
     $('startBtn').firstElementChild.textContent = carError ? 'Unable to load the car' : !nature ? 'Preparing scenery' : worldReady() && !carReady ? 'Preparing your car' : `Preparing the world · ${Math.min(99, Math.floor(count / total * 100))}%`;
-    if (worldReady() && carReady) {
+    // (and the roads around the start are worked out, so none is built mid-drive)
+    if (worldReady() && carReady && roadsReady) {
       loading = false; $('startBtn').disabled = false; $('startBtn').firstElementChild.textContent = started ? 'Keep exploring' : 'Start exploring';
       resetTiming(); resetCamera(); updateHUD(); drawMap();
       precompileShaders();
@@ -968,31 +1020,33 @@ function precompileShaders() {
   softenScenery(roadsideMaterial, 'fade');
   renderer.compile(scene, camera);
   for (const warmup of [grass.warmup, waterSystem.riverWarmup, bridgeWarmup, roadsideWarmup]) renderer.compile(warmup, camera, scene);
+  motionBlur.compile();
 }
 function beginWorldLoad(continueDriving = false) {
   if (running) pause();
-  worker?.terminate(); generation++; pending.clear(); completed = []; jobs = []; landmarkQueue.length = 0;
-  loading = true; resumeAfterLoad = continueDriving; running = false; streamError = null; loadingStarted = performance.now();
+  for (const worker of workers) worker.terminate();
+  generation++; pending.clear(); completed = []; jobs = []; landmarkQueue.length = 0;
+  loading = true; resumeAfterLoad = continueDriving; running = false; streamError = null; loadingStarted = performance.now(); roadsReady = false;
   $('startBtn').disabled = true; resetTiming();
   for (const chunk of chunks.values()) disposeChunk(chunk); chunks.clear();
   for (const tile of farTiles.values()) disposeTile(tile); farTiles.clear();
   for (const tile of ultraTiles.values()) disposeTile(tile); ultraTiles.clear();
   terrain = createTerrain(world);
   waterSystem.clear(); distantAt = { x: Infinity, z: Infinity }; distantReady = false;
-  worker = new Worker(new URL('./world-worker.mjs?v=roadside-1', import.meta.url), { type: 'module' });
+  workers = [0, 1].map(() => new Worker(new URL('./world-worker.mjs?v=classes-2', import.meta.url), { type: 'module' }));
   const failed = message => { streamError = message; running = false; $('loadError').hidden = false; $('startBtn').firstElementChild.textContent = 'Unable to prepare the world'; };
-  worker.onerror = error => failed(error.message);
-  worker.onmessage = ({ data }) => {
+  const received = ({ data }) => {
     if (data.generation !== generation) return;
     if (data.error) { failed(data.error); return; }
     profiler.record(data.kind === 'water' ? 'workerWater' : 'workerBuild', data.workMs); completed.push(data);
     // While the world loads there is no drive to keep smooth: install each
-    // result as it arrives and hand the worker its next job, rather than once
+    // result as it arrives and hand the workers their next jobs, rather than once
     // per frame. Where frames are slow (software rendering, an old phone),
-    // that keeps the worker busy instead of waiting on the screen. As in
+    // that keeps the workers busy instead of waiting on the screen. As in
     // frame(), the world is drawn once the moment it is ready.
     if (loading) { processStreaming(); if (!loading) render(0); }
   };
+  for (const worker of workers) { worker.onerror = error => failed(error.message); worker.onmessage = received; }
   lastCX = lastCZ = Infinity; streamWorld(true);
 }
 function nearbyObstacles() {
@@ -1043,7 +1097,7 @@ function updateSound(throttle, splashes, dt) {
   const v = vehicle;
   if ((heard.surfaceCheck -= dt) <= 0) {
     heard.surfaceCheck = .25;
-    heard.surface = v.onRoad ? 'road' : world.desertAt(v.x, v.z) || world.waterAt(v.x, v.z) || world.lakesNear(v.x, v.z, 0).length ? 'sand' : 'dirt';
+    heard.surface = v.onDirt ? 'dirt' : v.onRoad ? 'road' : world.desertAt(v.x, v.z) || world.waterAt(v.x, v.z) || world.lakesNear(v.x, v.z, 0).length ? 'sand' : 'dirt';
   }
   const slip = Math.abs(v.vx * Math.cos(v.heading) - v.vz * Math.sin(v.heading));
   audio.vehicle.update({ speed: v.speed, throttle, grounded: v.grounded, floating: v.floating, flying: v.flying, airspeed: v.airspeed, transform: v.transform, flight: v.flight, slip, surface: heard.surface, waterDepth: v.waterDepth, rain: weather.rain, snow: weather.snow }, dt);
@@ -1127,6 +1181,7 @@ function pause() {
   $('startBtn').focus({ preventScroll: true });
 }
 function resetTiming() {
+  motionBlur.reset();
   accumulator = 0; previousTime = performance.now(); frame.lastNow = previousTime;
   uiTime = mapTime = 0;
   vehiclePresentation.reset(vehicle);
@@ -1158,6 +1213,7 @@ function keepCameraInView(x, y, z) {
   }
 }
 function resetCamera() {
+  motionBlur.reset();
   updateDesiredCamera();
   cameraPosition.copy(desiredCamera); cameraTarget.copy(look);
   previousDesiredCamera.copy(desiredCamera); previousLook.copy(look);
@@ -1288,6 +1344,7 @@ function syncSettings() {
   $('touchGuide').textContent = settings.tilt ? 'Turn the phone like a steering wheel to steer; Jump and Drift sit at the left. ↑ accelerates, ↓ brakes or reverses, and FLY is beside them. In the air, turn to roll and tilt the top toward you to climb, away to dive; the ring works too.'
     : 'Slide the left control to steer; Jump and Drift sit just above it. ↑ accelerates, ↓ brakes or reverses, and FLY is beside them. In the air the slider becomes a ring: drag up to climb, down to dive, sideways to roll.';
   $('perfBtn').textContent = `FPS meter: ${settings.perfMeter ? 'On' : 'Off'}`; $('perfBtn').setAttribute('aria-pressed', String(Boolean(settings.perfMeter)));
+  $('blurBtn').textContent = `Motion blur: ${settings.motionBlur ? 'On' : 'Off'}`; $('blurBtn').setAttribute('aria-pressed', String(settings.motionBlur));
 }
 $('qualityBtn').onclick = () => {
   settings.quality = QUALITY_PRESETS[(QUALITY_PRESETS.indexOf(settings.quality) + 1) % QUALITY_PRESETS.length];
@@ -1297,6 +1354,10 @@ $('qualityBtn').onclick = () => {
 $('perfBtn').onclick = () => {
   settings.perfMeter = !settings.perfMeter; perfMeter.setVisible(settings.perfMeter); saveSettings(); syncSettings();
   toast(settings.perfMeter ? 'FPS meter on' : 'FPS meter off');
+};
+$('blurBtn').onclick = () => {
+  settings.motionBlur = !settings.motionBlur; saveSettings(); syncSettings();
+  toast(settings.motionBlur ? 'Motion blur on' : 'Motion blur off');
 };
 $('sensitivity').oninput = e => { settings.sensitivity = clamp(Number(e.target.value) / 100, .5, 1.5); saveSettings(); syncSettings(); };
 
@@ -1422,8 +1483,10 @@ function drawMap() {
     for (let k = 0; k < river.count; k += 2) { const [mx, my] = toMap(river.points[k * 2], river.points[k * 2 + 1]); if (k) ctx.lineTo(mx, my); else ctx.moveTo(mx, my); }
     ctx.stroke();
   }
-  ctx.strokeStyle = '#d6c99c'; ctx.lineWidth = 2.4;
   for (const road of world.roadsNear(vehicle.x, vehicle.z, range * 1.5 + 40)) {
+    // Highways bold, dirt tracks thin and dashed.
+    ctx.strokeStyle = road.kind === 'highway' ? '#f0e2b0' : road.kind === 'dirt' ? '#b8a27a' : '#d6c99c';
+    ctx.lineWidth = road.kind === 'highway' ? 3.6 : road.kind === 'dirt' ? 1.6 : 2.4; ctx.setLineDash(road.kind === 'dirt' ? [4, 3] : []);
     // About one point per two map pixels, however far the map has zoomed out.
     const every = Math.max(1, Math.round(2 / (scale * 10)));
     ctx.beginPath();
@@ -1431,6 +1494,7 @@ function drawMap() {
     const [ex, ey] = toMap(road.points[road.count * 2 - 2], road.points[road.count * 2 - 1]); ctx.lineTo(ex, ey);
     ctx.stroke();
   }
+  ctx.setLineDash([]);
   ctx.strokeStyle = '#eee7cc18'; ctx.lineWidth = 1;
   for (let i = 24; i < w; i += 48) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); }
   for (let i = 24; i < h; i += 48) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
@@ -1473,7 +1537,7 @@ function updateHUD() {
   $('flightHint').classList.toggle('simple', simple);
   const altitude = vehicle.y - world.surface(vehicle.x, vehicle.z);
   $('surfaceState').textContent = flying ? vehicle.alpha > .24 || vehicle.airspeed < STALL_SPEED ? 'STALL WARNING — LOWER THE NOSE' : vehicle.flightMode ? 'FLYING' : 'GLIDING IN TO LAND'
-    : unfolding ? vehicle.flightMode ? 'WINGS UNFOLDING' : 'FOLDING WINGS' : taxiing ? 'TAXIING' : transforming ? vehicle.boatMode ? 'DEPLOYING BOAT HULL' : 'RETURNING TO WHEELS' : vehicle.boatMode ? 'BOAT MODE' : !vehicle.grounded ? 'A LITTLE AIR' : input.brake && speed > 10 ? 'TAKE IT SIDEWAYS' : vehicle.onRoad ? 'ON THE ROAD' : 'OFF THE BEATEN PATH';
+    : unfolding ? vehicle.flightMode ? 'WINGS UNFOLDING' : 'FOLDING WINGS' : taxiing ? 'TAXIING' : transforming ? vehicle.boatMode ? 'DEPLOYING BOAT HULL' : 'RETURNING TO WHEELS' : vehicle.boatMode ? 'BOAT MODE' : !vehicle.grounded ? 'A LITTLE AIR' : input.brake && speed > 10 ? 'TAKE IT SIDEWAYS' : vehicle.onDirt ? 'ON THE TRACK' : vehicle.onRoad ? 'ON THE ROAD' : 'OFF THE BEATEN PATH';
   $('airtime').textContent = flying ? `ALT ${Math.round(altitude)} M · ${vehicle.vy >= 0 ? '+' : '−'}${Math.abs(vehicle.vy).toFixed(0)} M/S`
     : unfolding ? `WINGS · ${Math.round(vehicle.flight * 100)}%` : taxiing ? `LIFT-OFF AT ${Math.round(TAKEOFF_SPEED * 3.6)} KM/H` : transforming ? `TRANSFORMING · ${Math.round((vehicle.boatMode ? vehicle.transform : 1 - vehicle.transform) * 100)}%` : vehicle.floating ? `${vehicle.waterDepth.toFixed(1)} M WATER · W/S THROTTLE` : !vehicle.grounded ? `${Math.round(vehicle.airDistance)} M · ${vehicle.airtime.toFixed(1)} S AIR` : vehicle.bestJump > 5 ? 'BEST JUMP ' + Math.round(vehicle.bestJump) + ' M' : vehicle.bestAir > .4 ? 'BEST AIR ' + vehicle.bestAir.toFixed(1) + ' S' : 'READY TO ROAM';
   const lake = world.lakesNear(vehicle.x, vehicle.z, 700).sort((a, b) => Math.hypot(a.x - vehicle.x, a.z - vehicle.z) - Math.hypot(b.x - vehicle.x, b.z - vehicle.z))[0];
@@ -1501,6 +1565,9 @@ const vehiclePosition = new THREE.Vector3(), cameraPosition = new THREE.Vector3(
 const previousDesiredCamera = new THREE.Vector3(), previousLook = new THREE.Vector3(), attitude = new THREE.Quaternion();
 let previousTargetFov = camera.fov;
 const debris = createDebris(scene), rollPivot = new THREE.Vector3();
+let onGround = 1; // eased: whether the car stands on the ground (for its slope lift)
+// Dust off dirt tracks: sandy in the desert, earthy elsewhere; none in the wet.
+const dust = createDust(scene), dustColor = new THREE.Color(), earthDust = new THREE.Color(.5, .43, .33), sandDust = new THREE.Color(.74, .64, .46);
 let treeBreakage = null;
 const vehiclePresentation = createVehiclePresentation(vehicle, (x, z, heading) => groundAt(world, x, z, heading).y);
 let previousTime = performance.now(), accumulator = 0, uiTime = 0, mapTime = 0, idleRenderAt = 0, reportedLanding = 0;
@@ -1538,7 +1605,13 @@ function render(dt) {
   if (pose.useAttitude) car.quaternion.set(pose.qx, pose.qy, pose.qz, pose.qw);
   else car.rotation.set(pose.pitch, pose.heading, pose.roll, 'YXZ');
   rollPivot.set(0, 1, 0).applyQuaternion(car.quaternion);
-  car.position.set(pose.x - rollPivot.x, pose.y + 1 - rollPivot.y, pose.z - rollPivot.z);
+  // The body turns about its middle, 1 m up; held straight above the ground
+  // contact, tilting it would sink the wheels (1/cos − 1: 22 cm on a 35°
+  // climb). Lift it by that while it sits on the ground, easing in and out
+  // over a tenth of a second: in the air (rolls, flight) it turns freely.
+  onGround += ((vehicle.grounded && !vehicle.flying && !vehicle.floating ? 1 : 0) - onGround) * (1 - Math.exp(-dt * 12));
+  const upright = rollPivot.y, lift = upright > .5 ? Math.min(.45, 1 / upright - 1) * onGround : 0;
+  car.position.set(pose.x - rollPivot.x, pose.y + 1 - rollPivot.y + lift, pose.z - rollPivot.z);
   if (transformation) profiler.measure('transformAnimation', () => { transformation.update(pose.transform); flightRig.update(pose.flight); });
   if (propeller) { propellerAngle += dt * pose.flight * (18 + Math.abs(pose.speed) * .45); propeller.rotation.z = propellerAngle; }
   body.position.y = -pose.impact * .3 * (1 - pose.transform);
@@ -1604,7 +1677,11 @@ function render(dt) {
   const renderStarted = performance.now();
   const timed = perfMeter.visible && gpuTimer;
   if (timed) gpuTimer.begin();
-  renderer.render(scene, camera);
+  // Through the motion blur while driving or flying (on the menus nothing
+  // moves); on computers through its target either way.
+  const blur = settings.motionBlur && running;
+  if (blur || !screenMultisampled) { motionBlur.render(scene, camera, car.visible ? car : null, blur); drawStats = motionBlur.stats; }
+  else { renderer.render(scene, camera); motionBlur.reset(); drawStats = renderer.info.render; }
   if (timed) gpuTimer.end();
   profiler.record('renderCPU', performance.now() - renderStarted, testMode ? { time: pose.time, transform: pose.transform, wakes: waterSystem.wakeCount } : undefined);
 }
@@ -1622,9 +1699,10 @@ function frame(now) {
     if (next !== null) { applyQuality(next); settings.autoLevel = next; saveSettings(); }
   }
   frame.lastNow = now;
-  // Work out the roads ahead a little at a time (the worker has its own
-  // copy), so driving into new country never waits on routing.
-  profiler.measure('roadPrep', () => world.prepareRoads(vehicle.x, vehicle.z, 3000, loading ? 12 : 1.5));
+  // Work out the roads ahead a little at a time (the workers have their own
+  // copies), so driving into new country never waits on routing. Loading
+  // waits for those within 1.6 km (with more time a frame for them).
+  roadsReady = profiler.measure('roadPrep', () => loading ? world.prepareRoads(vehicle.x, vehicle.z, 1600, 30) : world.prepareRoads(vehicle.x, vehicle.z, 3000, 1.5));
   const wasLoading = loading;
   processStreaming();
   // Loading completion resets the clock; do not apply this frame’s old delta.
@@ -1640,6 +1718,8 @@ function frame(now) {
     }
     profiler.record('physics', performance.now() - physicsStarted);
     processBreakage(); debris.update(dt, world); treeBreakage.update(dt, world); updateFallingSigns(dt);
+    dustColor.copy(earthDust).lerp(sandDust, world.desertAt(vehicle.x, vehicle.z));
+    dust.update(dt, vehicle, vehicle.onDirt && roadLook.uWet.value < .3 && roadLook.uSnowCover.value < .3, dustColor, renderer.domElement.height, camera.fov);
     if (vehicle.boatMode !== reportedBoat) {
       reportedBoat = vehicle.boatMode;
       toast(reportedBoat ? 'Deep water — deploying boat hull' : 'Shore reached — returning to wheels');
@@ -1662,7 +1742,7 @@ function frame(now) {
   render(running ? dt : 0);
   const frameCPU = performance.now() - frameStarted;
   if (running) profiler.record('frameCPU', frameCPU);
-  if (perfMeter.visible) perfMeter.frame(frameCPU, now, { draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, level: qualityNames[levels[qualityLevel].name] ?? 'Medium+', pixelRatio: renderer.getPixelRatio(), paused: !running }, gpuTimer ? gpuTimer.drain() : null);
+  if (perfMeter.visible) perfMeter.frame(frameCPU, now, { draws: drawStats.calls, triangles: drawStats.triangles, level: qualityNames[levels[qualityLevel].name] ?? 'Medium+', pixelRatio: renderer.getPixelRatio(), paused: !running }, gpuTimer ? gpuTimer.drain() : null);
 }
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
@@ -1689,5 +1769,5 @@ if (testMode) window.__driveTest = { resetMetrics: () => profiler.reset(), snaps
   const natureInstances = {};
   for (const chunk of chunks.values()) if (chunk.group.visible) chunk.group.traverse(o => { if (o.isInstancedMesh && o.userData.natureKind) natureInstances[o.userData.natureKind] = (natureInstances[o.userData.natureKind] || 0) + o.count; });
   const impostorCount = [...farTiles.values()].reduce((n, t) => n + (t.userData.impostors?.meshes ?? []).reduce((m, mesh) => m + (mesh.isInstancedMesh ? mesh.count : 0), 0), 0);
-  return { clouds: { cloudiness: weather.clouds, drift: clouds.drift.toArray(), banks: clouds.count }, time: { hours: clock.hours, clock: clockLabel(clock.hours), day: dayLight.day, night: dayLight.night, sunHeight: dayLight.sun[1], key: sun.intensity, exposure: renderer.toneMappingExposure, headlights: lightsOn }, weather: { kind: weather.target.kind, region: weather.target.region, chance: weather.target.chance, rain: weather.rain, snow: weather.snow, particles: weatherFx.counts, fogColor: '#' + scene.fog.color.getHexString(), sun: sun.intensity }, horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: simpleFlight, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, tilt: settings.tilt, tiltActive: tiltActive(), pitchAxis: input.pitchAxis ?? null, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: renderer.info.render.calls, triangles: renderer.info.render.triangles, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, stalePending: [...pending.values()].filter(job => job.generation !== generation).length, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, effectTypes: audio.vehicle.playedBy, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
+  return { clouds: { cloudiness: weather.clouds, drift: clouds.drift.toArray(), banks: clouds.count }, time: { hours: clock.hours, clock: clockLabel(clock.hours), day: dayLight.day, night: dayLight.night, sunHeight: dayLight.sun[1], key: sun.intensity, exposure: renderer.toneMappingExposure, headlights: lightsOn }, weather: { kind: weather.target.kind, region: weather.target.region, chance: weather.target.chance, rain: weather.rain, snow: weather.snow, particles: weatherFx.counts, fogColor: '#' + scene.fog.color.getHexString(), sun: sun.intensity }, horizon: { ultraTiles: ultraTiles.size, impostors: impostorCount, impostorsVisible: impostorsEnabled, distantWater: waterSystem.distantCount, fogNear: scene.fog.near, fogFar: scene.fog.far, cameraNear: camera.near }, flight: { mode: vehicle.flightMode, progress: vehicle.flight, flying: vehicle.flying, simpleControls: simpleFlight, airspeed: vehicle.airspeed, altitude: vehicle.y - world.surface(vehicle.x, vehicle.z), propeller: propellerAngle, wingsVisible: car.getObjectByName('WingSeg1_L')?.visible ?? false, wingspan: car.getObjectByName('WingSeg3_L') ? car.getObjectByName('WingSeg3_L').getWorldPosition(new THREE.Vector3()).distanceTo(car.getObjectByName('WingSeg3_R').getWorldPosition(new THREE.Vector3())) : 0, clouds: clouds.count }, quality: { preset: settings.quality, level: levels[qualityLevel].name, pixelRatio: renderer.getPixelRatio(), shadow: sun.shadow.mapSize.x, farShadow: farSun.castShadow ? farSun.shadow.mapSize.x : 0, grassDensity: grass.density }, controls: { sensitivity: settings.sensitivity, tilt: settings.tilt, tiltActive: tiltActive(), pitchAxis: input.pitchAxis ?? null, steer: input.steer ?? null, throttle: throttleInput() }, water: { lakes: waterSystem.count, wakes: waterSystem.wakeCount }, natureAsset: { ready: Boolean(nature), error: natureError, assets: nature?.stats ?? [], instances: natureInstances }, grass: grassStats, metrics: profiler.snapshot(), draws: drawStats.calls, triangles: drawStats.triangles, motionBlur: settings.motionBlur, carMeshes, carDraws, carAsset: { ready: carReady, error: carError, name: 'ATLAS Amphibious', animationDuration: transformation?.duration, hullSpan: car.getObjectByName('Hull_R')?.position.x - car.getObjectByName('Hull_L')?.position.x, triangles: carTriangles, wheelPivots: wheelPivots.map(p => p.parent.position.toArray()), wheelSteer: wheelPivots.map(p => p.rotation.y), wheelSpin: wheelSpinners.map(p => p.rotation.x), headlights: headMat.emissiveIntensity, brakes: brakeMat.emissiveIntensity }, chunks: chunks.size, farTiles: farTiles.size, loading, generation, streamError, pending: pending.size, stalePending: [...pending.values()].filter(job => job.generation !== generation).length, queued: jobs.length, carBatching: carBatching.map(({ before, after }) => ({ before, after })), vehicle: { ...vehicle }, renderPose: { ...vehiclePresentation.pose }, debris: debris.count, fallingTrees: treeBreakage?.count ?? 0, sound: audio ? { muted, played: audio.breaks.played, active: audio.breaks.active, effects: audio.vehicle.played, effectTypes: audio.vehicle.playedBy, gear: audio.vehicle.gear, masterGain: audio.master.gain.value } : null, brokenProps: world.brokenProps.size, hiddenProps, accumulator, cameraError: cameraPosition.distanceTo(desiredCamera) + cameraTarget.distanceTo(look), camera: cameraPosition.toArray(), target: cameraTarget.toArray() };
 } };

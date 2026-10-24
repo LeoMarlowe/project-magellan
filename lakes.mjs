@@ -115,7 +115,10 @@ export function createLakes(seed, baseHeight, roadAt) {
       return original + (basin - original) * (1 - smooth(1.05, SEA_REACH, r)) * (r < 1 ? 1 : smooth(10, 50, roadAt(x, z).d));
     }
     const basin = lake.level - lake.depth * (1 - smooth(.18, .98, r)) + smooth(.88, 1.15, r) * 3 + Math.max(0, r - 1.15) * 10;
-    const weight = (1 - smooth(1.05, 2.1, r)) * smooth(12, 110, roadAt(x, z).d);
+    // Roads beside or across a pond keep their level and shoulders; only a
+    // slipway has the basin dug under it, so its end runs on down into it.
+    const road = roadAt(x, z), spare = smooth(12, 110, road.d);
+    const weight = (1 - smooth(1.05, 2.1, r)) * (road.slipway ? 1 + (spare - 1) * smooth(.85, 1, r) : spare);
     return original + (basin - original) * weight;
   }
   function near(x, z, radius = 900) {

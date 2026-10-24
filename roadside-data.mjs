@@ -7,7 +7,7 @@
 // in world space, except the signs: each is its own small piece (positions
 // from its foot), so a car can knock it over. Reflective faces are marked to
 // shine back in the headlights. Guardrails and signs are also obstacles.
-import { CHUNK } from './world.mjs?v=roadside-1';
+import { CHUNK } from './world.mjs?v=classes-2';
 
 const RAIL = [.42, .45, .47], STEEL = [.24, .25, .26], WHITE = [.78, .77, .72], BLACK = [.02, .02, .02], AMBER = [.92, .42, .04], RED = [.55, .02, .02];
 const YELLOW = [.86, .6, .03], BOARD = [.8, .8, .76];
@@ -44,16 +44,19 @@ export function buildRoadside(world, terrain, cx, cz) {
   // A sign: its own piece, built by draw(y) in world space and kept relative
   // to its foot, and an obstacle that breaks (falls) when hit.
   const sign = (id, x, z, height, draw) => {
+    if (Math.hypot(x, z) < 30) return; // the car starts at a junction: keep its way clear
     const y = world.surface(x, z), start = signParts.position.length / 3;
     rest(x, z); out = signParts; origin = [x, y, z];
     draw(y);
     out = fixed; origin = [0, 0, 0];
     signs.push({ id, x, y, z, start, count: signParts.position.length / 3 - start });
-    obstacles.push({ type: 'sign', id, x, z, y, h: height, r: .1 });
+    obstacles.push({ type: 'sign', id, x, z, y, h: height, r: .5 }); // its board, not just its post
   };
 
   const roads = world.roadsNear(x0 + CHUNK / 2, z0 + CHUNK / 2, CHUNK);
   for (const road of roads) {
+    if (road.ring) continue; // a roundabout's ring: kerbed island, no bend furniture
+    const w = road.extra; // set out by the road's own width
     const unit = road.length / (road.count - 1), p = road.points;
     // The stretch of this road that matters here: within 70 m of the chunk.
     let s0 = Infinity, s1 = -Infinity;
@@ -78,7 +81,7 @@ export function buildRoadside(world, terrain, cx, cz) {
     for (const side of [-1, 1]) {
       const STEP = 2, first = Math.floor(s0 / STEP), last = Math.ceil(s1 / STEP), need = [];
       for (let i = first; i <= last; i++) {
-        const s = i * STEP, curve = curveAt(s), out = world.alongRoad(road, s, side * 13);
+        const s = i * STEP, curve = curveAt(s), out = world.alongRoad(road, s, side * (13 + w));
         need.push(open(s, 10) && ((Math.abs(curve) > TIGHT && Math.sign(curve) === -side) || levelAt(s) - world.groundSurface(out.x, out.z) > 2.4));
       }
       const railed = need.map(() => false);
@@ -90,7 +93,7 @@ export function buildRoadside(world, terrain, cx, cz) {
       }
       for (let i = 0; i < railed.length - 1; i++) {
         if (!railed[i] || !railed[i + 1]) continue;
-        const sa = (first + i) * STEP, sb = sa + STEP, a = world.alongRoad(road, sa, side * 6.1), b = world.alongRoad(road, sb, side * 6.1);
+        const sa = (first + i) * STEP, sb = sa + STEP, a = world.alongRoad(road, sa, side * (6.1 + w)), b = world.alongRoad(road, sb, side * (6.1 + w));
         const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
         if (!mine(mx, mz) || !clear(mx, mz, 7)) continue;
         rest(mx, mz);
@@ -101,10 +104,10 @@ export function buildRoadside(world, terrain, cx, cz) {
         quad([a.x + nx, ya + .61, a.z + nz], [b.x + nx, yb + .61, b.z + nz], [b.x, yb + .77, b.z], [a.x, ya + .77, a.z], RAIL);
         quad([a.x, ya + .77, a.z], [b.x, yb + .77, b.z], [b.x - nx, yb + .77, b.z - nz], [a.x - nx, ya + .77, a.z - nz], RAIL);
         if ((first + i) % 2 === 0) {
-          const post = world.alongRoad(road, sa, side * 6.25);
+          const post = world.alongRoad(road, sa, side * (6.25 + w));
           box(post.x, ya + .37, post.z, post.heading, .05, .37, .05, STEEL);
           // A reflector on every other post, on the beam's face toward the road.
-          if ((first + i) % 4 === 0) { const r = world.alongRoad(road, sa, side * 5.99); box(r.x, ya + .62, r.z, r.heading, .01, .035, .05, side > 0 ? WHITE : AMBER, 1); }
+          if ((first + i) % 4 === 0) { const r = world.alongRoad(road, sa, side * (5.99 + w)); box(r.x, ya + .62, r.z, r.heading, .01, .035, .05, side > 0 ? WHITE : AMBER, 1); }
         }
         obstacles.push({ type: 'rail', ax: a.x, az: a.z, bx: b.x, bz: b.z, x: mx, z: mz, y: Math.min(ya, yb), h: .8, r: .12 });
       }
@@ -115,7 +118,7 @@ export function buildRoadside(world, terrain, cx, cz) {
     for (let s = Math.ceil(s0 / 20) * 20; s <= s1; s += 20) {
       const curve = curveAt(s);
       if (Math.abs(curve) < SHARP || !open(s, 15)) continue;
-      const side = -Math.sign(curve), at = world.alongRoad(road, s, side * 7.6);
+      const side = -Math.sign(curve), at = world.alongRoad(road, s, side * (7.6 + w));
       if (!mine(at.x, at.z) || !clear(at.x, at.z, 9)) continue;
       sign(`sign:${road.id}:${s}`, at.x, at.z, 2.1, y => {
         post(at.x, at.z, 1.75, STEEL, .045);
@@ -137,9 +140,9 @@ export function buildRoadside(world, terrain, cx, cz) {
     // each way (amber on the right, white on the left), except where a
     // guardrail runs.
     for (let s = 21; s < road.length - 21; s += 42) {
-      if (s < s0 || s > s1) continue;
+      if (s < s0 || s > s1 || road.kind === 'dirt') continue; // (tracks go without)
       for (const side of [-1, 1]) {
-        const at = world.alongRoad(road, s, side * 6.4);
+        const at = world.alongRoad(road, s, side * (6.4 + w));
         if (!mine(at.x, at.z) || world.roadAt(at.x, at.z).d < 5.8 || obstacles.some(o => o.type === 'rail' && Math.hypot(o.x - at.x, o.z - at.z) < 4)) continue;
         rest(at.x, at.z);
         const y = world.surface(at.x, at.z);
@@ -150,22 +153,32 @@ export function buildRoadside(world, terrain, cx, cz) {
     }
   }
 
-  // At each junction: a stop sign beside every side road's stop line, on its
-  // incoming lane's right, and one fingerpost on the widest corner with a
-  // board pointing up each road.
-  const seen = new Set();
+  // At each junction: a stop sign beside every side road's stop line (lanes
+  // included), on its incoming lane's right, and one fingerpost on the
+  // widest corner with a board pointing up each road.
+  const seen = new Set(), placed = [];
   for (const road of roads) for (const id of road.id.split('>')) {
     if (seen.has(id)) continue; seen.add(id);
     const junction = world.junctionAt(id);
     if (!junction || junction.arms.length < 3) continue;
     for (const arm of junction.arms) {
       if (arm.main) continue;
-      const s = arm.start ? arm.setback + 1.5 : arm.e.length - arm.setback - 1.5, at = world.alongRoad(arm.e, s, (arm.start ? 1 : -1) * 6.7);
-      if (!mine(at.x, at.z)) continue;
-      // It faces the cars coming toward the junction.
+      const s = arm.start ? arm.setback + 1.5 : arm.e.length - arm.setback - 1.5, at = world.alongRoad(arm.e, s, (arm.start ? 1 : -1) * (6.7 + arm.e.extra));
+      // One sign per corner, where two arms share a corridor.
+      if (!mine(at.x, at.z) || placed.some(([x, z]) => Math.hypot(x - at.x, z - at.z) < 4)) continue;
+      placed.push([at.x, at.z]);
+      // It faces the cars coming toward the junction: a give-way triangle
+      // at a roundabout, a stop sign otherwise.
       sign(`sign:${arm.e.id}:${arm.start ? 'start' : 'end'}`, at.x, at.z, 3.1, y => {
         post(at.x, at.z, 2.4, STEEL, .045);
         const facing = arm.start ? at.heading : at.heading + Math.PI, fx = Math.sin(facing) * .02, fz = Math.cos(facing) * .02;
+        if (arm.ring) {
+          const triangle = r => [[-r, r * .58], [r, r * .58], [0, -r * 1.15]];
+          face(at.x, y + 2.5, at.z, facing, triangle(.68), RED, 1, .02);
+          face(at.x + fx * .1, y + 2.5, at.z + fz * .1, facing, triangle(.46), WHITE, 1, .024);
+          face(at.x - fx, y + 2.5, at.z - fz, facing + Math.PI, triangle(.68), STEEL, 0, .02);
+          return;
+        }
         const ring = r => Array.from({ length: 8 }, (_, k) => [Math.cos((k + .5) * Math.PI / 4) * r, Math.sin((k + .5) * Math.PI / 4) * r]);
         face(at.x, y + 2.5, at.z, facing, ring(.62), WHITE, 1, .02);
         face(at.x + fx * .1, y + 2.5, at.z + fz * .1, facing, ring(.55), RED, 1, .024);
@@ -173,15 +186,17 @@ export function buildRoadside(world, terrain, cx, cz) {
         face(at.x, y + 2.5, at.z, facing, [[-.37, .085], [.37, .085], [.37, -.085], [-.37, -.085]], WHITE, 1, .028);
       });
     }
-    // The widest gap between neighbouring roads.
+    // A fingerpost (not at a lane's T junction), in the widest gap between neighbouring roads.
+    if (junction.tee) continue;
     const angles = junction.arms.map(a => Math.atan2(a.dx, a.dz)).sort((a, b) => a - b);
     let gap = -1, mid = 0;
     for (let k = 0; k < angles.length; k++) {
       const a = angles[k], b = k + 1 < angles.length ? angles[k + 1] : angles[0] + Math.PI * 2;
       if (b - a > gap) { gap = b - a; mid = (a + b) / 2; }
     }
-    const x = junction.x + Math.sin(mid) * 13, z = junction.z + Math.cos(mid) * 13;
-    if (!mine(x, z) || world.roadAt(x, z).d < 7) continue;
+    // (At a roundabout it stands in the middle of the island.)
+    const out = 13 + Math.max(...junction.arms.map(arm => arm.e.extra)), x = junction.ring ? junction.x : junction.x + Math.sin(mid) * out, z = junction.ring ? junction.z : junction.z + Math.cos(mid) * out;
+    if (!mine(x, z) || (!junction.ring && world.roadAt(x, z).d < 7)) continue;
     sign(`sign:${junction.id}`, x, z, 3.3, y => {
       post(x, z, 3.2, WHITE, .07);
       junction.arms.slice(0, 4).forEach((arm, k) => {

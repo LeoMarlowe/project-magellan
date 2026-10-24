@@ -1,7 +1,10 @@
 import * as THREE from './vendor/three.module.js';
-import { GRID, smoothstep, clamp } from './world.mjs?v=roadside-1';
-import { lakeRadius } from './lakes.mjs?v=rivers-1';
-import { SNOW_LINE, TREELINE } from './landforms.mjs?v=terrain-1';
+import { GRID, smoothstep, clamp, cellWeights, splitsAlongAD } from './world.mjs?v=classes-2';
+// The horizon tier's grid: fine enough (48 m) to keep the ranges' shape, so
+// mountains barely change as they come nearer.
+export const ULTRA_GRID = 48;
+import { lakeRadius } from './lakes.mjs?v=classes-2';
+import { SNOW_LINE, TREELINE } from './landforms.mjs?v=classes-2';
 import { noise } from './noise.mjs?v=terrain-1';
 export function createTerrain(world) {
   const seed = world.seed;
@@ -12,17 +15,22 @@ export function createTerrain(world) {
   // and hold less snow.
   const sunX = -.872, sunZ = .489;
   // Far (24 m) and horizon (96 m) samples are revisited by neighbouring tiles.
-  const sampleCaches = { 24: new Map(), 96: new Map() };
+  const sampleCaches = { 24: new Map(), 48: new Map() };
   function terrainSample(x, z, step) {
     const key = `${x},${z}`, cache = sampleCaches[step];
     if (cache?.has(key)) return cache.get(key);
-    const h = world.height(x, z), delta = step / 2;
-    const gx = (world.height(x + delta, z) - world.height(x - delta, z)) / step;
-    const gz = (world.height(x, z + delta) - world.height(x, z - delta)) / step;
+    // Shading follows the ground over 8 m (or the tier's own cell); colour
+    // (rock, scree, snow, sunny slopes) follows its lie over 24 m on every
+    // tier, so the small ripples of a mountainside don't stripe it grass and
+    // rock column by column, and colours stay put as the tiers swap.
+    const h = world.height(x, z), delta = Math.max(4, step / 2);
+    const gx = (world.height(x + delta, z) - world.height(x - delta, z)) / (2 * delta);
+    const gz = (world.height(x, z + delta) - world.height(x, z - delta)) / (2 * delta);
     const length = Math.hypot(gx, 1, gz);
-    const slope = Math.hypot(gx, gz), mountain = world.mountainAt(x, z), desert = world.desertAt(x, z, h);
+    const wx = (world.height(x + 12, z) - world.height(x - 12, z)) / 24, wz = (world.height(x, z + 12) - world.height(x, z - 12)) / 24;
+    const slope = Math.hypot(wx, wz), mountain = world.mountainAt(x, z), desert = world.desertAt(x, z, h);
     // 1 facing the midday sun, -1 facing away (flat ground counts as neither).
-    const sunny = clamp(-(gx * sunX + gz * sunZ) / (slope + .05), -1, 1) * smoothstep(.05, .3, slope);
+    const sunny = clamp(-(wx * sunX + wz * sunZ) / (slope + .05), -1, 1) * smoothstep(.05, .3, slope);
     // Grass: lusher in the woods, with smooth drier patches, drier on sunny
     // slopes, turning to alpine meadow above the trees.
     tmpColor.copy(groundColors.grass).lerp(groundColors.lush, smoothstep(.3, .8, world.woodlandAt(x, z)) * .65);
@@ -42,7 +50,11 @@ export function createTerrain(world) {
     tmpColor.lerp(rockColor.copy(groundColors.scree).lerp(groundColors.sandstoneDark, desert * .7), foot * .5);
     // Rock faces where it is too steep for soil, and bare ground high in the
     // ranges: layered sandstone in the desert, banded granite elsewhere.
-    const bands = .5 + .5 * Math.sin(h * .55 + noise(x / 40, z / 40, seed + 20) * 3);
+    // The bands climb with height, so on a steep face neighbouring grid points
+    // sit far apart in them: where the grid can't follow them they fade to
+    // their average, instead of aliasing into blocks.
+    const climb = Math.hypot(gx, gz) * Math.max(step, GRID) * .25, legible = 1 - smoothstep(.9, 1.8, climb);
+    const bands = .5 + .5 * Math.sin(h * .25 + noise(x / 40, z / 40, seed + 20) * 3) * legible;
     rockColor.copy(groundColors.granite).lerp(groundColors.graniteDark, bands * .7);
     redRock.copy(groundColors.sandstone).lerp(groundColors.sandstoneDark, bands);
     rockColor.lerp(redRock, desert);
@@ -62,23 +74,23 @@ export function createTerrain(world) {
     return sample;
   }
   // The surface a coarser tier actually draws: its grid triangles, split the
-  // same way as the rendered index buffers (u + v <= 1).
+  // same way as the rendered index buffers (cellWeights).
   function gridSample(x, z, step) {
     const ix = Math.floor(x / step) * step, iz = Math.floor(z / step) * step;
-    const u = (x - ix) / step, v = (z - iz) / step;
-    const corners = u + v <= 1 ? [[ix, iz, 1-u-v], [ix+step, iz, u], [ix, iz+step, v]]
-      : [[ix+step, iz+step, u+v-1], [ix, iz+step, 1-u], [ix+step, iz, 1-v]];
+    const u = (x - ix) / step, v = (z - iz) / step, at = [[ix, iz], [ix + step, iz], [ix, iz + step], [ix + step, iz + step]];
+    const samples = at.map(([px, pz]) => terrainSample(px, pz, step)), weights = cellWeights(u, v, ...samples.map(s => s.height));
     const result = { height: 0, normal: [0,0,0], color: [0,0,0] };
-    for (const [px, pz, weight] of corners) {
-      const sample = terrainSample(px, pz, step);
+    for (let k = 0; k < 4; k++) {
+      const sample = samples[k], weight = weights[k];
+      if (!weight) continue;
       result.height += sample.height * weight;
       for (let i=0; i<3; i++) { result.normal[i] += sample.normal[i]*weight; result.color[i] += sample.color[i]*weight; }
     }
     return result;
   }
-  const coarseSample = (x, z) => gridSample(x, z, 24), ultraSample = (x, z) => gridSample(x, z, 96);
+  const coarseSample = (x, z) => gridSample(x, z, 24), ultraSample = (x, z) => gridSample(x, z, ULTRA_GRID);
   function terrainGeometry(wx, wz, size, step, exclude = null) {
-    const positions = [], colors = [], normals = [], indices = [], coarseHeights = [], coarseNormals = [], coarseColors = [], ultraHeights = [];
+    const positions = [], colors = [], normals = [], indices = [], split = [], coarseHeights = [], coarseNormals = [], coarseColors = [], ultraHeights = [];
     const n = Math.round(size / step);
     for (let iz = 0; iz <= n; iz++) for (let ix = 0; ix <= n; ix++) {
       const x = wx + ix * step, z = wz + iz * step, h = world.height(x, z);
@@ -90,13 +102,20 @@ export function createTerrain(world) {
       // Far tiles blend toward the horizon tier's surface before meeting it.
       ultraHeights.push(step === 24 ? ultraSample(x, z).height : distant.height);
     }
+    // Which diagonal each square is split along (the far tiers rebuild their
+    // index lists as nearer tiles come and go, with this).
+    for (let iz = 0; iz < n; iz++) for (let ix = 0; ix < n; ix++) {
+      const a = iz * (n + 1) + ix, b = a + 1, c = a + n + 1, d = c + 1;
+      split.push(splitsAlongAD(positions[a * 3 + 1], positions[b * 3 + 1], positions[c * 3 + 1], positions[d * 3 + 1]) ? 1 : 0);
+    }
     for (let iz = 0; iz < n; iz++) for (let ix = 0; ix < n; ix++) {
       const x = wx + (ix + .5) * step, z = wz + (iz + .5) * step;
       if (exclude && x >= exclude.x0 && x < exclude.x1 && z >= exclude.z0 && z < exclude.z1) continue;
       const a = iz * (n + 1) + ix, b = a + 1, c = a + n + 1, d = c + 1;
-      indices.push(a, c, b, b, c, d);
+      if (split[iz * n + ix]) indices.push(a, c, d, a, d, b);
+      else indices.push(a, c, b, b, c, d);
     }
-    return { position: new Float32Array(positions), normal: new Float32Array(normals), color: new Float32Array(colors), index: new Uint32Array(indices), coarseHeight: new Float32Array(coarseHeights), coarseNormal: new Float32Array(coarseNormals), coarseColor: new Float32Array(coarseColors), ultraHeight: new Float32Array(ultraHeights) };
+    return { position: new Float32Array(positions), normal: new Float32Array(normals), color: new Float32Array(colors), index: new Uint32Array(indices), split: new Uint8Array(split), coarseHeight: new Float32Array(coarseHeights), coarseNormal: new Float32Array(coarseNormals), coarseColor: new Float32Array(coarseColors), ultraHeight: new Float32Array(ultraHeights) };
   }
   return { build: terrainGeometry, coarseSample, ultraSample };
 }

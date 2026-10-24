@@ -1,6 +1,6 @@
 // Typed arrays cross the worker boundary by transfer, with no terrain sampling
 // or large mesh-generation loops left on the animation thread.
-import { lakeExtent, lakeRadius } from './lakes.mjs?v=rivers-1';
+import { lakeExtent, lakeRadius } from './lakes.mjs?v=classes-2';
 export function buildWaterData(world, lake, terrain = null) {
   // Irregular sea coasts reach past the nominal radii; cover their full extent.
   const reach = lake.shape.length ? lakeExtent(lake) / Math.max(lake.rx, lake.rz) * 1.06 : 1.03;
