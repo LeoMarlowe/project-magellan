@@ -377,9 +377,13 @@ export function stepFlight(car, input, world, dt, groundAt) {
     // landing is not taken for a touchdown that folds the wings.
     const clear = !car.grounded && !car.floating && (car.y - groundAt(world, car.x, car.z, car.heading).y > 1.2 || car.airtime > .45);
     if (car.flightMode && car.flight >= .35 && clear) startFlying(car);
-    else if (car.flightMode && car.flight === 1) return taxi(car, input, world, dt, groundAt);
+    else if (car.flightMode && car.flight === 1) { car.impact *= Math.exp(-8 * dt); return taxi(car, input, world, dt, groundAt); }
     else return false;
   }
+  // A knock fades here as it does on the road and the water. Held instead,
+  // the one the car took off with read as a fresh knock (a thump) whenever a
+  // frame ran long: after a pause, a hitch, or on a slower phone.
+  car.impact *= Math.exp(-8 * dt);
   return fly(car, input, world, dt, groundAt);
 }
 
