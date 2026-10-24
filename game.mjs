@@ -91,12 +91,13 @@ else if (testMode) settings.quality = coarse ? 'medium' : 'high';
 if (!QUALITY_PRESETS.includes(settings.quality)) settings.quality = 'auto';
 settings.sensitivity = clamp(Number(settings.sensitivity) || 1, .5, 1.5);
 settings.tilt = coarse && settings.tilt === true;
-// Motion blur: on by default on computers (phones keep the GPU time for the
-// rest), off in tests unless ?blur=1.
+// Motion blur: on by default, off in tests unless ?blur=1. Phones used to
+// default to off, and every save stored that, so a phone's saved "off" counts
+// only once the player has chosen it.
 const blurParam = new URLSearchParams(location.search).get('blur');
 if (blurParam !== null) settings.motionBlur = blurParam === '1';
 else if (testMode) settings.motionBlur = false;
-else if (typeof settings.motionBlur !== 'boolean') settings.motionBlur = !coarse;
+else if (typeof settings.motionBlur !== 'boolean' || (coarse && !settings.motionBlurChosen)) settings.motionBlur = true;
 // Flight always starts on the full controls; T switches for this visit only
 // (an older build remembered simple controls).
 delete settings.simpleFlight;
@@ -1356,7 +1357,7 @@ $('perfBtn').onclick = () => {
   toast(settings.perfMeter ? 'FPS meter on' : 'FPS meter off');
 };
 $('blurBtn').onclick = () => {
-  settings.motionBlur = !settings.motionBlur; saveSettings(); syncSettings();
+  settings.motionBlur = !settings.motionBlur; settings.motionBlurChosen = true; saveSettings(); syncSettings();
   toast(settings.motionBlur ? 'Motion blur on' : 'Motion blur off');
 };
 $('sensitivity').oninput = e => { settings.sensitivity = clamp(Number(e.target.value) / 100, .5, 1.5); saveSettings(); syncSettings(); };

@@ -157,7 +157,7 @@ Auto steps down after about 2 seconds of frames slower than 48 fps, or when more
 
 A graph plots the last 120 frames against the 60 and 30 fps lines. Browsers usually cap at your display's refresh rate, so a steady 60 fps with a low CPU figure means there's headroom.
 
-**Motion blur** (on by default on computers, off on phones) blurs what moves fast across the screen, the way a camera would, so posts, trees and road lines rushing past at speed read as motion instead of a row of separate copies. The car or plane stays sharp. It costs about 1 ms of GPU time a frame at High on a MacBook Air M2.
+**Motion blur** (on by default) blurs what moves fast across the screen, the way a camera would, so posts, trees and road lines rushing past at speed read as motion instead of a row of separate copies. The car or plane stays sharp. It costs about 1 ms of GPU time a frame at High on a MacBook Air M2.
 
 ### Link options
 
