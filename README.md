@@ -6,27 +6,35 @@ An endless, procedurally generated world to drive, sail and fly through: meadows
 
 Every visit generates a new world. Add `?seed=123456` to a link to share or revisit the same one.
 
-![Driving past Mirror Lake toward the first jump ramps](docs/screenshots/hero-road.jpg)
+![The ATLAS cruising down a highway past a purple barrel-roll ramp on a hillside](docs/screenshots/hero-road.jpg)
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/boat.jpg" alt="The ATLAS as a boat, leaving a V-shaped wake across a lake"><br><sub><b>Boat mode.</b> Drive into deep water and the car becomes a boat.</sub></td>
-    <td width="50%"><img src="docs/screenshots/flying.jpg" alt="The ATLAS flying as a plane over meadows, roads and a lake"><br><sub><b>Flying.</b> Unfold the wings anywhere and take off.</sub></td>
+    <td width="50%"><img src="docs/screenshots/boat.jpg" alt="The ATLAS as a boat, leaving a V-shaped wake across a lake toward a sandy shore"><br><sub><b>Boat mode.</b> Drive into deep water and the car becomes a boat.</sub></td>
+    <td width="50%"><img src="docs/screenshots/flying.jpg" alt="The ATLAS flying as a plane high above pine-dotted meadows and a winding road"><br><sub><b>Flying.</b> Unfold the wings anywhere and take off.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/sea.jpg" alt="Flying toward a large turquoise inland sea with sandy shores"><br><sub><b>Inland seas.</b> Lakes and seas stretch to the horizon from the air.</sub></td>
-    <td><img src="docs/screenshots/barrel-roll.jpg" alt="The car mid barrel roll above a purple twisted ramp in the desert"><br><sub><b>Barrel rolls.</b> Purple ramps twist you into a roll.</sub></td>
+    <td><img src="docs/screenshots/sea.jpg" alt="Flying over sand dunes toward a turquoise inland sea ringed by mountains"><br><sub><b>Inland seas.</b> Lakes and seas stretch to the horizon from the air.</sub></td>
+    <td><img src="docs/screenshots/bridge.jpg" alt="Driving onto a railed bridge over a river crossing a meadow"><br><sub><b>Rivers and bridges.</b> Rivers wind down to the seas, and roads bridge them.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/ramp-jump.jpg" alt="The car airborne off an orange ramp, its shadow on the grass below"><br><sub><b>Jump ramps.</b> Orange ramps launch you automatically.</sub></td>
-    <td><img src="docs/screenshots/desert.jpg" alt="A road through sandy desert dunes dotted with cacti"><br><sub><b>The Sandlands.</b> Deserts, snowfields, pine woods and meadows.</sub></td>
+    <td><img src="docs/screenshots/roundabout.jpg" alt="A two-lane highway arriving at a roundabout with a give-way sign"><br><sub><b>Road network.</b> Highways, country roads, junctions and roundabouts.</sub></td>
+    <td><img src="docs/screenshots/dirt-track.jpg" alt="The car on a rutted dirt track through grassland and pines"><br><sub><b>Dirt tracks.</b> Roads through forests and mountains turn to dirt.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/sunset.jpg" alt="Driving at dusk under a pink sunset sky, headlights on"><br><sub><b>Day and night.</b> The sun rises and sets, and dusk glows pink.</sub></td>
-    <td><img src="docs/screenshots/night.jpg" alt="Driving at night by headlight under a dark blue moonlit sky"><br><sub><b>Night.</b> Drive by moonlight and headlights.</sub></td>
+    <td><img src="docs/screenshots/ramp-jump.jpg" alt="The car airborne off an orange ramp beside a highway"><br><sub><b>Jump ramps.</b> Orange ramps launch you automatically.</sub></td>
+    <td><img src="docs/screenshots/barrel-roll.jpg" alt="The car upside down mid barrel roll, just off a purple twisted ramp"><br><sub><b>Barrel rolls.</b> Purple ramps twist you into a roll.</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/rain.jpg" alt="Driving through a grassy meadow in heavy rain under a grey sky"><br><sub><b>Weather.</b> Each region has its own climate: rain in the pines, snow on the peaks, sun in the desert.</sub></td>
+    <td><img src="docs/screenshots/desert.jpg" alt="A road through sandy desert dotted with cacti, hazy mountains beyond"><br><sub><b>The Sandlands.</b> Deserts, pine woods, meadows and mountains.</sub></td>
+    <td><img src="docs/screenshots/snow.jpg" alt="The car climbing a dirt track up a snowy mountainside as snow falls"><br><sub><b>The Peaks.</b> Snow falls on the high ground and settles on the tracks.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/sunset.jpg" alt="Driving at dusk under a pink sky, headlights on"><br><sub><b>Day and night.</b> The sun rises and sets, and dusk glows pink.</sub></td>
+    <td><img src="docs/screenshots/night.jpg" alt="Driving at night by headlight under a dark blue sky"><br><sub><b>Night.</b> Drive by moonlight and headlights.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/rain.jpg" alt="Crossing a river bridge in heavy rain on a wet, reflective road under a grey sky"><br><sub><b>Weather.</b> Each region has its own climate: rain in the pines, snow on the peaks, sun in the desert. Rain leaves the roads wet and shiny.</sub></td>
   </tr>
 </table>
 
