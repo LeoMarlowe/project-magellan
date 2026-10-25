@@ -5,6 +5,7 @@ import { createRivers } from './rivers.mjs?v=rivers-1';
 import { stepAmphibious } from './amphibious-motion.mjs?v=physics-16';
 import { controlAxis } from './controls.mjs?v=slider-1';
 import { stepFlight, wingStrikes } from './flight-motion.mjs?v=physics-17';
+import { ROADSTER, SUCTION, hoverWorld, overWater, roadsterAcceleration, roadsterDrag, fireThrusters, roadsterState } from './roadster-motion.mjs?v=roadster-1';
 import { clamp, mix, smoothstep, hash, random, noise } from './noise.mjs?v=terrain-1';
 import { createLandforms, TREELINE, SNOW_LINE } from './landforms.mjs?v=classes-2';
 export { clamp, mix, smoothstep, hash, random, noise };
@@ -261,8 +262,25 @@ export function createWorld(seed) {
   function desertAt(x, z, elevation = height(x, z)) {
     return land.desertMask(x, z) * (1 - mountainAt(x, z)) * (1 - smoothstep(150, 200, elevation));
   }
+  // Low, wide props (rocks, boulders, scree, junipers) sit flat on the ground.
+  // On a sharp summit or ridge the 2 m gradient reads level, but the ground
+  // falls away on both sides of their footprint and they'd hang in the air:
+  // there, where opposite edges of the footprint average well below its
+  // centre, they don't grow. (On an even slope opposite edges average out.)
+  const FOOTPRINT = { rock: [.9, .18], boulder: [.85, .12], scree: [2.8, .12], bush: [.8, .2] }; // radius and allowed bulge, × size
+  function seated(p) {
+    const fit = FOOTPRINT[p.type];
+    if (!fit) return true;
+    const radius = fit[0] * p.size, bulge = fit[1] * p.size;
+    for (let k = 0; k < 4; k++) {
+      const a = k * Math.PI / 4, dx = Math.cos(a) * radius, dz = Math.sin(a) * radius;
+      if (p.y - (surface(p.x + dx, p.z + dz) + surface(p.x - dx, p.z - dz)) / 2 > bulge) return false;
+    }
+    return true;
+  }
   function props(cx, cz) {
     const rng = random((hash(cx, cz, seed + 101) * 4294967296) >>> 0), list = [];
+    const add = p => { if (seated(p)) list.push(p); };
     // Fixed candidates and clearances make revisited chunks identical.
     for (let i = 0; i < 30; i++) {
       const x = cx * CHUNK + 9 + rng() * (CHUNK - 18), z = cz * CHUNK + 9 + rng() * (CHUNK - 18);
@@ -286,26 +304,26 @@ export function createWorld(seed) {
       // Boulders, rocks and scree gather at the foot of slopes, in the ranges
       // and beneath the mesas.
       if ((mountain > .15 || desert > .3) && chance < .45 && footOfSlope(x, z, slope) > .35) {
-        if (chance < .16) list.push({ id, type: 'boulder', x, z, y, size: size * 2.3, turn, r: size * 1.5, h: size * 2.6 });
-        else if (mountain > .15 && chance < .32) list.push({ id, type: 'scree', x, z, y, size, turn, r: 0, h: .4 });
-        else list.push({ id, type: 'rock', x, z, y, size, turn, r: 0, h: .65 * size });
+        if (chance < .16) add({ id, type: 'boulder', x, z, y, size: size * 2.3, turn, r: size * 1.5, h: size * 2.6 });
+        else if (mountain > .15 && chance < .32) add({ id, type: 'scree', x, z, y, size, turn, r: 0, h: .4 });
+        else add({ id, type: 'rock', x, z, y, size, turn, r: 0, h: .65 * size });
         continue;
       }
       // Loose stone on the high, moderately steep mountain slopes.
-      if (mountain > .25 && slope > .3 && y > TREELINE - 50 && chance > .8) { list.push({ id, type: 'scree', x, z, y, size, turn, r: 0, h: .4 }); continue; }
+      if (mountain > .25 && slope > .3 && y > TREELINE - 50 && chance > .8) { add({ id, type: 'scree', x, z, y, size, turn, r: 0, h: .4 }); continue; }
       // Above the treeline: rocks and boulders, and low junipers below the snow.
       const alpine = smoothstep(TREELINE - 30, TREELINE + 10, y);
       if (alpine > .5) {
-        if (chance < (y > SNOW_LINE ? .12 : .3)) list.push({ id, type: chance < .1 ? 'boulder' : 'rock', x, z, y, size: chance < .1 ? size * 2.3 : size, turn, r: chance < .1 ? size * 1.5 : 0, h: chance < .1 ? size * 2.6 : .65 * size });
-        else if (y < SNOW_LINE - 10 && chance < .5) list.push({ id, type: 'bush', variant: VARIANT.bush.juniper, x, z, y, size, turn, r: 0, h: .6 * size });
+        if (chance < (y > SNOW_LINE ? .12 : .3)) add({ id, type: chance < .1 ? 'boulder' : 'rock', x, z, y, size: chance < .1 ? size * 2.3 : size, turn, r: chance < .1 ? size * 1.5 : 0, h: chance < .1 ? size * 2.6 : .65 * size });
+        else if (y < SNOW_LINE - 10 && chance < .5) add({ id, type: 'bush', variant: VARIANT.bush.juniper, x, z, y, size, turn, r: 0, h: .6 * size });
         continue;
       }
-      if (chance < .1 && mountain > .25) list.push({ id, type: 'boulder', x, z, y, size: size * 2.3, turn, r: size * 1.5, h: size * 2.6 });
-      else if (chance < .22) list.push({ id, type: 'rock', x, z, y, size, turn, r: 0, h: .65 * size });
+      if (chance < .1 && mountain > .25) add({ id, type: 'boulder', x, z, y, size: size * 2.3, turn, r: size * 1.5, h: size * 2.6 });
+      else if (chance < .22) add({ id, type: 'rock', x, z, y, size, turn, r: 0, h: .65 * size });
       else if (desert > .55) {
-        if (chance < .62) list.push({ id, type: 'cactus', x, z, y, size, turn, r: .38 * size, h: 4.7 * size });
-        else if (chance < .76) list.push({ id, type: 'bush', variant: VARIANT.bush.desert, x, z, y, size, turn, r: 0, h: .9 * size });
-        else list.push({ id, type: 'rock', x, z, y, size: size * .7, turn, r: 0, h: .5 * size });
+        if (chance < .62) add({ id, type: 'cactus', x, z, y, size, turn, r: .38 * size, h: 4.7 * size });
+        else if (chance < .76) add({ id, type: 'bush', variant: VARIANT.bush.desert, x, z, y, size, turn, r: 0, h: .9 * size });
+        else add({ id, type: 'rock', x, z, y, size: size * .7, turn, r: 0, h: .5 * size });
       }
       else if (chance < mix(.46, .95, smoothstep(.3, .75, woodland)) * (1 - alpine * 1.6) && mountain < .95) {
         // Snow-dusted pines on the cold upper slopes, wind-stunted ones at the
@@ -314,8 +332,8 @@ export function createWorld(seed) {
         const variant = y > TREELINE - 35 ? VARIANT.tree.stunted : pick < upper * .6 ? VARIANT.tree.snow
           : (desert > .12 && pick < .35) || pick < .015 ? VARIANT.tree.dead : undefined;
         const height = variant === VARIANT.tree.stunted ? 3.4 : variant === VARIANT.tree.dead ? 5.8 : 6.8;
-        list.push({ id, type: 'tree', variant, x, z, y, size, turn, r: .24 * size, h: height * size });
-      } else list.push({ id, type: 'bush', variant: desert > .3 ? VARIANT.bush.desert : y > TREELINE - 60 ? VARIANT.bush.juniper : undefined, x, z, y, size, turn, r: 0, h: size });
+        add({ id, type: 'tree', variant, x, z, y, size, turn, r: .24 * size, h: height * size });
+      } else add({ id, type: 'bush', variant: desert > .3 ? VARIANT.bush.desert : y > TREELINE - 60 ? VARIANT.bush.juniper : undefined, x, z, y, size, turn, r: 0, h: size });
     }
     for (const f of featuresNear(cx * CHUNK + CHUNK / 2, cz * CHUNK + CHUNK / 2, 100)) {
       if (Math.floor(f.x / CHUNK) !== cx || Math.floor(f.z / CHUNK) !== cz || f.type === 'ramp') continue;
@@ -342,10 +360,13 @@ export function groundAt(world, x, z, heading, y) {
   const l = world.surface(x + rx * .96, z + rz * .96, y), r = world.surface(x - rx * .96, z - rz * .96, y);
   return { y: Math.max(world.surface(x, z, y), (f + b + l + r) / 4) + .06, pitch: -Math.atan((f - b) / 2.72), roll: Math.atan((l - r) / 1.92) };
 }
-export function createVehicle(world, x = 0, z = 0, heading = 0) {
-  const g = groundAt(world, x, z, heading);
-  const water = world.waterAt?.(x, z), floating = Boolean(water && water.depth > .9);
-  return { x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, onDirt: false, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, crashFold: false, alpha: 0, shadow: 0, shadowVy: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
+// kind: 'atlas' (the transforming 4×4) or 'roadster', which hovers over water
+// on its thrusters instead of floating.
+export function createVehicle(world, x = 0, z = 0, heading = 0, kind = 'atlas') {
+  const roadster = kind === 'roadster';
+  const g = groundAt(roadster ? hoverWorld(world) : world, x, z, heading);
+  const water = world.waterAt?.(x, z), floating = !roadster && Boolean(water && water.depth > .9);
+  return { kind, ...(roadster ? roadsterState(overWater(world, x, z)) : {}), x, z, y: floating ? Math.max(g.y, water.level - .52) : g.y, vx: 0, vz: 0, vy: 0, heading, steer: 0, grounded: !floating, groundY: g.y, pitch: floating ? 0 : g.pitch, roll: floating ? 0 : g.roll, rollVelocity: 0, airRoll: 0, rolls: 0, smashed: 0, distance: 0, airtime: 0, bestAir: 0, airDistance: 0, bestJump: 0, landings: 0, jumps: 0, jumpBuffer: 0, coyote: .1, jumpHeld: false, landLock: 0, impact: 0, speed: 0, onRoad: !floating, onDirt: false, time: 0, transform: floating ? 1 : 0, boatMode: floating, floating, waterDepth: water?.depth ?? 0, waterLevel: water?.level ?? null, boatDistance: 0, transformations: 0, flightMode: false, flight: 0, flying: false, airspeed: 0, climb: 0, sink: 0, flights: 0, flightDistance: 0, maxAltitude: 0, climbOut: false, crashFold: false, alpha: 0, shadow: 0, shadowVy: 0, qx: 0, qy: Math.sin(heading / 2), qz: 0, qw: Math.cos(heading / 2) };
 }
 export function resolveObstacles(car, obstacles, world) {
   for (let pass = 0; pass < 3; pass++) for (const o of obstacles) {
@@ -394,12 +415,27 @@ function launchRoll(car, ramp, speed) {
   car.airRoll = 0;
 }
 export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
-  if (stepFlight(car, input, world, dt, groundAt) || stepAmphibious(car, input, world, dt, groundAt)) {
+  const roadster = car.kind === 'roadster';
+  if (!roadster && (stepFlight(car, input, world, dt, groundAt) || stepAmphibious(car, input, world, dt, groundAt))) {
     // Space climbs in the air and does nothing afloat: never let a press made
     // there (or one held through the landing) fire a jump on touchdown.
     car.jumpBuffer = 0; car.jumpHeld = !!input.jump;
     if (car.flight > .3) wingStrikes(car, obstacles, world);
     resolveObstacles(car, obstacles, world); return;
+  }
+  // The Roadster never becomes a boat or a plane. Water is a surface its
+  // thrusters hold it above (and drive it across), and its own thrusters
+  // boost it forward and lift it into hops and hovers.
+  const thrust = roadster ? fireThrusters(car, input, dt) : null;
+  if (roadster) {
+    const water = world.waterAt?.(car.x, car.z);
+    car.time += dt; car.waterDepth = water?.depth ?? 0; car.waterLevel = water?.level ?? null;
+    car.overWater = Boolean(water) && water.level + ROADSTER.waterGap > world.surface(car.x, car.z);
+    world = hoverWorld(world);
+    if (thrust.lifting && car.grounded) {
+      car.grounded = false; car.coyote = 0; car.shadow = 0; car.shadowVy = 0; car.landLock = .2;
+      car.airtime = 0; car.airDistance = 0; car.airRoll = 0; car.vy = Math.max(car.vy, 2); car.hops++;
+    }
   }
   const throttle = controlAxis(input.throttle, input.up, input.down), brake = !!input.brake;
   const jumpPressed = !!input.jump && !car.jumpHeld;
@@ -426,33 +462,54 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   // the car slides back rather than racing up a mountainside.
   const slope = car.grounded ? world.gradient(car.x, car.z) : { x: 0, z: 0 }, rise = slope.x * fx + slope.z * fz;
   const climbing = car.grounded ? smoothstep(.15, .9, rise * Math.sign(forward || throttle || 1)) : 0;
-  const power = 1 - .62 * climbing;
+  // The Roadster's suction fans grip on land (not over water), when switched on.
+  const suction = roadster && car.fans && car.grounded && !car.overWater;
+  if (roadster) car.suction = suction;
+  const power = 1 - .62 * climbing * (suction ? SUCTION.climbLoss : 1);
+  const paved = 1 - smoothstep(ROAD_HALF - 1, ROAD_HALF + 3, roadDistance);
+  if (roadster && car.overWater) car.onRoad = car.onDirt = false;
+  // Braking or drifting at speed, the Roadster's wing becomes an air brake.
+  if (roadster) car.airBrake = (throttle < -.05 && forward > 3) || (brake && speed > 3);
   let acceleration = 0;
-  if (throttle > 0) acceleration = throttle * (forward < -.5 ? 45 : 34 * (1 - smoothstep(mix(56, 72, highway) * power, mix(72, 89.5, highway) * power, forward)));
-  if (throttle < 0) acceleration = -throttle * (forward > .5 ? -55 : -18 * (1 - smoothstep(10, 16, -forward)));
+  if (roadster) acceleration = roadsterAcceleration(throttle, forward, paved, car.onDirt, power, car.overWater, suction);
+  else {
+    if (throttle > 0) acceleration = throttle * (forward < -.5 ? 45 : 34 * (1 - smoothstep(mix(56, 72, highway) * power, mix(72, 89.5, highway) * power, forward)));
+    if (throttle < 0) acceleration = -throttle * (forward > .5 ? -55 : -18 * (1 - smoothstep(10, 16, -forward)));
+  }
   const uphillPush = rise * Math.sign(acceleration);
-  if (car.grounded && uphillPush > 0) acceleration *= 1 - .92 * smoothstep(.75, 1.2, uphillPush);
+  if (car.grounded && uphillPush > 0) acceleration *= 1 - .92 * (suction ? smoothstep(...SUCTION.stall, uphillPush) : smoothstep(.75, 1.2, uphillPush));
   car.vx += fx * acceleration * authority * dt; car.vz += fz * acceleration * authority * dt;
+  // Thrust needs no grip: the rear nozzles push as hard in the air.
+  if (thrust?.boost) { car.vx += fx * thrust.boost * dt; car.vz += fz * thrust.boost * dt; }
   const targetSteer = controlAxis(input.steer, input.left, input.right);
   car.steer = mix(car.steer, targetSteer, 1 - Math.exp(-10 * dt));
-  car.heading += car.steer * (brake ? 2.1 : 1.7) * Math.min(speed / 5, 1) / (1 + speed * .032) * Math.sign(forward || 1) * authority * dt;
+  // Hovering, the flank nozzles turn the car at any speed (its momentum
+  // carries on the way it was going until the tyres touch down again).
+  const yawing = roadster && !car.grounded && thrust.lifting;
+  car.yaw = yawing ? car.steer : 0;
+  if (yawing) car.heading += car.steer * ROADSTER.yawRate * dt;
+  else if (suction) car.heading += car.steer * (brake ? SUCTION.turnBrake : SUCTION.turn) * Math.min(speed / 5, 1) / (1 + speed * SUCTION.turnFade) * Math.sign(forward || 1) * dt;
+  else car.heading += car.steer * (brake ? 2.1 : 1.7) * Math.min(speed / 5, 1) / (1 + speed * .032) * Math.sign(forward || 1) * authority * dt;
   const nx = Math.sin(car.heading), nz = Math.cos(car.heading), along = car.vx * nx + car.vz * nz;
-  const grip = car.grounded ? (brake ? 1.9 : car.onDirt ? 6.5 : car.onRoad ? 12 : 8) : .2;
+  // The Roadster's suction fans hold it harder on tarmac; on its air cushion
+  // over water it slides like a hovercraft.
+  const grip = car.grounded ? (brake ? 1.9 : roadster && car.overWater ? 1.6 : suction ? (car.onDirt ? SUCTION.grip.dirt : car.onRoad ? SUCTION.grip.road : SUCTION.grip.grass) : car.onDirt ? 6.5 : car.onRoad ? (roadster ? 14 : 12) : 8) : .2;
   const decay = Math.exp(-grip * dt);
   car.vx = nx * along + (car.vx - nx * along) * decay; car.vz = nz * along + (car.vz - nz * along) * decay;
-  const drag = Math.exp(-(car.grounded ? brake ? 1.6 : car.onDirt ? .15 : car.onRoad ? .11 : .19 : .015) * dt);
+  const drag = roadster ? roadsterDrag(car, brake, paved, dt) : Math.exp(-(car.grounded ? brake ? 1.6 : car.onDirt ? .15 : car.onRoad ? .11 : .19 : .015) * dt);
   car.vx *= drag; car.vz *= drag;
   if (car.grounded) {
-    const g = slope, steep = 7 + 10 * smoothstep(.6, 1.3, Math.hypot(g.x, g.z));
+    const g = slope, steep = (7 + 10 * smoothstep(.6, 1.3, Math.hypot(g.x, g.z))) * (suction ? SUCTION.slopePull : 1);
     // Hill hold at rest; on gentle ground the engine comfortably exceeds
     // downhill gravity, and steep faces pull harder.
     if (throttle || speed > .5) { car.vx -= g.x * steep * dt; car.vz -= g.z * steep * dt; }
     if (!throttle && Math.hypot(car.vx, car.vz) < .35) { car.vx = 0; car.vz = 0; }
   }
-  const horizontal = Math.hypot(car.vx, car.vz);
-  if (horizontal > SPEED_LIMIT) { car.vx *= SPEED_LIMIT / horizontal; car.vz *= SPEED_LIMIT / horizontal; }
+  const horizontal = Math.hypot(car.vx, car.vz), limit = roadster ? ROADSTER.speedLimit : SPEED_LIMIT;
+  if (horizontal > limit) { car.vx *= limit / horizontal; car.vz *= limit / horizontal; }
   const oldX = car.x, oldZ = car.z;
   car.x += car.vx * dt; car.z += car.vz * dt;
+  if (thrust?.lift && !car.grounded) car.vy += thrust.lift * dt;
   if (!car.grounded) { car.vy -= 22 * dt; car.y += car.vy * dt; car.airtime += dt; car.airDistance += Math.hypot(car.vx, car.vz) * dt; car.bestAir = Math.max(car.bestAir, car.airtime); }
   resolveObstacles(car, obstacles, world);
   let g = groundAt(world, car.x, car.z, car.heading, car.y);
@@ -467,7 +524,7 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   if ((car.grounded || car.y <= g.y) && moved > 1e-4) {
     const ax = (car.x - oldX) / moved * 1.36, az = (car.z - oldZ) / moved * 1.36, aheadX = 2 * car.x - oldX + ax, aheadZ = 2 * car.z - oldZ + az;
     const climb = world.surface(aheadX, aheadZ, car.y) - world.surface(oldX + ax, oldZ + az, car.y);
-    if (climb > 1e-3 && climb > moved * 2 * 1.3 && !besideRamp(world, car.x, car.z)) {
+    if (climb > 1e-3 && climb > moved * 2 * (suction ? SUCTION.wall : 1.3) && !besideRamp(world, car.x, car.z)) {
       const up = world.gradient(aheadX, aheadZ), steepness = Math.hypot(up.x, up.z) || 1, nx = up.x / steepness, nz = up.z / steepness, into = car.vx * nx + car.vz * nz;
       car.x = oldX; car.z = oldZ;
       if (into > 0) { car.vx -= nx * into; car.vz -= nz * into; car.impact = Math.max(car.impact, Math.min(.3, into * .012)); }
@@ -503,8 +560,10 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
         // Off the land's own crests, taken slowly, the suspension soaks up half
         // the climb (a bank at a crawl is no jump); from about 100 km/h, and
         // off ramps, the car leaves with all of it.
-        const fast = besideRamp(world, car.x, car.z) ? 1 : smoothstep(12, 28, horizontal);
-        const lift = Math.min(mix(3, 28, fast), Math.max(0, car.shadowVy) * mix(.5, 1, fast) + Math.min(0, car.shadowVy));
+        const ramped = besideRamp(world, car.x, car.z), fast = ramped ? 1 : smoothstep(12, 28, horizontal);
+        // The Roadster's fans pull it back down off the land's own crests.
+        const hold = suction && !ramped ? SUCTION.crestHold : 1;
+        const lift = Math.min(mix(3, 28, fast), Math.max(0, car.shadowVy) * mix(.5, 1, fast) * hold + Math.min(0, car.shadowVy));
         car.vy = clamp(car.shadowVy, -3, lift); car.y = g.y + car.shadow; car.shadow = 0; car.shadowVy = 0;
         launchRoll(car, ramp, Math.abs(rampSpeed));
       } else { car.y = g.y; car.vy = surfaceVy; }
@@ -531,7 +590,9 @@ export function stepVehicle(car, input, world, obstacles, dt = FIXED_DT) {
   } else car.roll = mix(car.roll, car.grounded ? g.roll : 0, 1 - Math.exp(-(car.grounded ? 12 : .5) * dt));
   car.impact *= Math.exp(-8 * dt);
   car.speed = car.vx * nx + car.vz * nz;
-  car.distance += Math.hypot(car.x - oldX, car.z - oldZ);
+  const travelled = Math.hypot(car.x - oldX, car.z - oldZ);
+  car.distance += travelled;
+  if (roadster && car.overWater) car.waterDistance += travelled;
 }
 export function recoverVehicle(car, world) {
   const road = world.roadAt(car.x, car.z);
@@ -553,8 +614,9 @@ export function recoverVehicle(car, world) {
     if (nearby.some(o => o.r && Math.hypot(x - o.x, z - o.z) < o.r + 3)) continue;
     const slope = world.gradient(x, z);
     if (Math.hypot(slope.x, slope.z) > .6) continue;
-    const { distance, bestAir, jumps, bestJump, landings, rolls, smashed, boatDistance, transformations, flights, flightDistance, maxAltitude } = car;
-    Object.assign(car, createVehicle(world, x, z, car.heading), { distance, bestAir, jumps, bestJump, landings, rolls, smashed, boatDistance, transformations, flights, flightDistance, maxAltitude });
+    const { distance, bestAir, jumps, bestJump, landings, rolls, smashed, boatDistance, transformations, flights, flightDistance, maxAltitude, hops, boostTime, hoverTime, waterDistance, fans } = car;
+    Object.assign(car, createVehicle(world, x, z, car.heading, car.kind), { distance, bestAir, jumps, bestJump, landings, rolls, smashed, boatDistance, transformations, flights, flightDistance, maxAltitude },
+      car.kind === 'roadster' ? { hops, boostTime, hoverTime, waterDistance, fans } : {});
     return true;
   }
   return false;

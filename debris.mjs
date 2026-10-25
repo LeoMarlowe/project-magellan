@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { random, hash } from './world.mjs?v=classes-2';
+import { random, hash } from './world.mjs?v=roadster-1';
 
 // One draw call and a fixed particle pool, even when ploughing through a grove.
 export function createDebris(scene, capacity = 192) {

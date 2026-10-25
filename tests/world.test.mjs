@@ -381,3 +381,23 @@ test('a crest of the land at a crawl is no jump, but at speed it launches', () =
   for (let i = 0; i < 360; i++) { stepVehicle(fast, { up: true }, land, []); flown = Math.max(flown, fast.y - bank(fast.z)); }
   assert.ok(flown > 3, `a fast crest launches: ${flown.toFixed(2)} m`);
 });
+test('rocks, boulders, scree and junipers never perch on sharp summits or ridges', () => {
+  // On a knife edge the ground falls away on both sides of a flat prop's
+  // footprint (while the 2 m gradient at its centre reads level), leaving it
+  // hanging in the air. On an even slope opposite edges average out.
+  const reach = { rock: .9, boulder: .85, scree: 2.8, bush: .8 }, allowed = { rock: .18, boulder: .12, scree: .12, bush: .2 };
+  let high = 0;
+  for (const seed of [483921, 3]) {
+    const world = createWorld(seed);
+    for (let cx = -30; cx < 30; cx += 3) for (let cz = -30; cz < 30; cz += 3) for (const p of world.props(cx, cz)) {
+      if (!reach[p.type]) continue;
+      if (p.y > 250) high++;
+      for (let k = 0; k < 4; k++) {
+        const a = k * Math.PI / 4, dx = Math.cos(a) * reach[p.type] * p.size, dz = Math.sin(a) * reach[p.type] * p.size;
+        const bulge = p.y - (world.surface(p.x + dx, p.z + dz) + world.surface(p.x - dx, p.z - dz)) / 2;
+        assert.ok(bulge <= allowed[p.type] * p.size + 1e-9, `${p.type} ${p.id} sits ${bulge.toFixed(2)} m proud of its edges`);
+      }
+    }
+  }
+  assert.ok(high > 10, 'the high ground still has its rocks');
+});

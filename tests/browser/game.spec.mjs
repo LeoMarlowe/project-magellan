@@ -1,12 +1,12 @@
 import { PNG } from 'pngjs';
 import { test, expect } from '@playwright/test';
-async function openGame(page, seed = 1, mode = 'browser') {
+async function openGame(page, seed = 1, mode = 'browser', vehicle = 'atlas') {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error' && /WebGL|shader|buffer|drawElements|worker/i.test(message.text())) errors.push(message.text()); });
   // Gameplay must remain functional without external fonts/CDNs.
   await page.route('https://**/*', route => route.abort());
-  await page.goto(`/?seed=${seed}&test=${mode}`);
+  await page.goto(`/?seed=${seed}&test=${mode}${vehicle === 'atlas' ? '' : `&vehicle=${vehicle}`}`);
   await expect(page.getByRole('button', { name: 'Start exploring', exact: true })).toBeEnabled({ timeout: 60000 });
   return errors;
 }
@@ -240,6 +240,72 @@ test('F unfolds the wings and folds them away again', async ({ page }) => {
   await expect.poll(async () => (await snapshot(page)).flight.wingsVisible, { timeout: 10000 }).toBe(false);
   await expect(page.locator('#flyAction')).toHaveText('fly');
   expect((await snapshot(page)).flight.mode).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test('the Roadster boosts, skims a lake and hovers on its thrusters, and swaps with the ATLAS', async ({ page }, testInfo) => {
+  test.setTimeout(120000);
+  const errors = await openGame(page, 3, 'water', 'roadster');
+  const initial = await snapshot(page);
+  expect(initial.carAsset).toMatchObject({ ready: true, error: null, kind: 'roadster', name: 'Roadster Rocket', plumes: 0 });
+  expect(initial.vehicle).toMatchObject({ kind: 'roadster', gas: 1, transform: 0 });
+  await expect(page.locator('#vehicleBtn')).toHaveText('Vehicle: Roadster');
+  await page.getByRole('button', { name: 'Start exploring', exact: true }).click();
+  await expect(page.locator('#gasRow')).toBeVisible();
+  await expect(page.locator('#flyAction')).toHaveText('hover');
+  // E fires the four rear nozzles: plumes, a draining tank and the BOOST readout.
+  await page.keyboard.down('KeyW'); await page.keyboard.down('KeyE');
+  await expect.poll(async () => (await snapshot(page)).carAsset.plumes, { timeout: 10000 }).toBeGreaterThanOrEqual(4);
+  await expect(page.locator('#surfaceState')).toHaveText('BOOST');
+  await testInfo.attach('roadster-boost', { body: await page.screenshot(), contentType: 'image/png' });
+  await page.keyboard.up('KeyE');
+  expect((await snapshot(page)).vehicle.gas).toBeLessThan(1);
+  // Deep water: no boat, it rides on the thrusters just above the surface
+  // (once down from any hop off the shore).
+  await expect.poll(async () => { const v = (await snapshot(page)).vehicle; return v.overWater && v.grounded; }, { timeout: 30000 }).toBe(true);
+  const skimming = await snapshot(page);
+  expect(skimming.vehicle).toMatchObject({ floating: false, boatMode: false, transform: 0 });
+  expect(skimming.vehicle.y - skimming.vehicle.waterLevel).toBeCloseTo(.41, 1);
+  expect(skimming.renderPose.y).toBeGreaterThan(skimming.vehicle.waterLevel);
+  await expect.poll(async () => (await snapshot(page)).water.wakes, { timeout: 10000 }).toBeGreaterThan(0);
+  await expect(page.locator('#surfaceState')).toHaveText('SKIMMING THE WATER');
+  await testInfo.attach('roadster-skimming-lake', { body: await page.screenshot(), contentType: 'image/png' });
+  // Held F lifts it into a hover.
+  await page.keyboard.down('KeyF');
+  await expect.poll(async () => { const v = (await snapshot(page)).vehicle; return !v.grounded && v.lift > 0 ? v.y - v.groundY : 0; }, { timeout: 10000 }).toBeGreaterThan(2);
+  await expect(page.locator('#surfaceState')).toHaveText('HOVERING ON THRUSTERS');
+  await testInfo.attach('roadster-hovering', { body: await page.screenshot(), contentType: 'image/png' });
+  await page.keyboard.up('KeyF'); await page.keyboard.up('KeyW');
+  // Settings → Vehicle swaps in the ATLAS where it is: a boat, on the lake.
+  await expect.poll(async () => (await snapshot(page)).vehicle.grounded, { timeout: 10000 }).toBe(true);
+  await page.keyboard.press('Escape');
+  await page.locator('#vehicleBtn').click();
+  await expect.poll(async () => (await snapshot(page)).carAsset.kind, { timeout: 30000 }).toBe('atlas');
+  const atlas = await snapshot(page);
+  expect(atlas.vehicle).toMatchObject({ kind: 'atlas', floating: true });
+  expect(atlas.vehicle.distance).toBeGreaterThan(50);
+  await expect(page.locator('#vehicleBtn')).toHaveText('Vehicle: ATLAS');
+  await expect(page.locator('#gasRow')).toBeHidden();
+  // V switches back mid-drive, to the Roadster's red telemetry HUD.
+  await page.getByRole('button', { name: 'Keep exploring', exact: true }).click();
+  await expect(page.locator('#telemetry')).toBeHidden();
+  await page.keyboard.press('KeyV');
+  await expect.poll(async () => (await snapshot(page)).carAsset.kind, { timeout: 10000 }).toBe('roadster');
+  await expect(page.locator('#telemetry')).toBeVisible();
+  await expect(page.locator('#tmFan')).toHaveText('THRUSTER LIFT'); // still on the lake
+  // Braking at speed stands the rear wing up as an air brake.
+  await page.keyboard.down('KeyW'); await page.keyboard.down('KeyE');
+  await expect.poll(async () => (await snapshot(page)).vehicle.speed, { timeout: 10000 }).toBeGreaterThan(20);
+  await page.keyboard.up('KeyE'); await page.keyboard.up('KeyW'); await page.keyboard.down('KeyS');
+  await expect.poll(async () => (await snapshot(page)).carAsset.wingAngle, { timeout: 5000 }).toBeGreaterThan(.5);
+  await expect(page.locator('#tmWing')).toHaveText('AIR BRAKE');
+  await page.keyboard.up('KeyS');
+  // G switches the suction fans off and on.
+  await page.keyboard.press('KeyG');
+  await expect.poll(async () => (await snapshot(page)).vehicle.fans).toBe(false);
+  await expect(page.locator('#tmFan')).toHaveText(/OFF|THRUSTER LIFT/);
+  await page.keyboard.press('KeyG');
+  await expect.poll(async () => (await snapshot(page)).vehicle.fans).toBe(true);
   expect(errors).toEqual([]);
 });
 

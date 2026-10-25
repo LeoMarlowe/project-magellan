@@ -170,6 +170,13 @@ export function createVehicleAudio(context, output, capacity = 10) {
   const snowTone = filter('lowpass', 320, .7), snowGain = gainNode(0), snowSwell = osc('sine', .13), snowDepth = gainNode(0);
   noise(1.7).connect(snowTone).connect(snowGain).connect(output); snowSwell.connect(snowDepth).connect(snowGain.gain);
 
+  // The Roadster: an electric drive's whine rising with road speed, in place
+  // of the V8, and the rushing hiss and low roar of cold gas from the thrusters.
+  const whine = osc('sawtooth', 120), whine2 = osc('triangle', 180), whineTone = filter('bandpass', 900, 1.1), whineGain = gainNode(0);
+  whine.connect(whineTone); whine2.connect(whineTone); whineTone.connect(whineGain).connect(engineBus);
+  const gasTone = filter('bandpass', 1100, .5), gasGain = gainNode(0), gasLow = filter('lowpass', 260, .6), gasRoar = gainNode(0);
+  noise(1.4).connect(gasTone).connect(gasGain).connect(output); noise(.35).connect(gasLow).connect(gasRoar).connect(output);
+
   // Transform motors: a servo whine while hulls or wings move.
   const motor = osc('triangle', 160), motorTone = filter('bandpass', 700, 2.5), motorGain = gainNode(0);
   motor.connect(motorTone).connect(motorGain).connect(output);
@@ -207,12 +214,17 @@ export function createVehicleAudio(context, output, capacity = 10) {
     const boatRpm = 1000 + smooth(0, 26, v) * 3600 + load * 600, planeRpm = 1900 + load * 650 + air * 2.5;
     const rpm = carRpm * car + boatRpm * boat + planeRpm * plane;
     set(engine.playbackRate, rpm / ENGINE_BASE_RPM, .05);
-    set(engineGain.gain, car * (.055 + load * .04) + boat * (.07 + load * .04) + plane * (.06 + load * .04), .1);
+    const electric = s.electric ? 1 : 0;
+    set(engineGain.gain, (1 - electric) * (car * (.055 + load * .04) + boat * (.07 + load * .04) + plane * (.06 + load * .04)), .1);
+    set(whineGain.gain, electric * (.006 + load * .014) * (.3 + .7 * smooth(.5, 12, v)), .1);
+    set(whine.frequency, 70 + v * 19, .06); set(whine2.frequency, 105 + v * 28.5, .06); set(whineTone.frequency, 500 + v * 22, .08);
+    const thrust = s.thrust ?? 0;
+    set(gasGain.gain, thrust * .045, .04); set(gasRoar.gain, thrust * .07, .05); set(gasTone.frequency, 800 + thrust * 700, .1);
     const tone = car * (320 + rpm * .12 + load * 450) + boat * (240 + rpm * .05) + plane * (420 + load * 300);
     set(engineTone.frequency, tone, .08); set(engineTone2.frequency, tone * 1.4, .08);
     // Lifting off after a long pull at high revs pops a few times; quick
     // throttle taps stay quiet.
-    if (car > .5 && held > 1.2 && s.throttle < .1 && rpm > 3200) burble = .45;
+    if (car > .5 && !electric && held > 1.2 && s.throttle < .1 && rpm > 3200) burble = .45;
     held = s.throttle > .5 ? held + dt : 0; burble = Math.max(0, burble - dt);
     if (burble > 0 && Math.random() < dt * 6) play('pop', .03 + Math.random() * .03, (Math.random() - .5) * .3, .8 + Math.random() * .4, .1);
 
@@ -256,7 +268,7 @@ export function createVehicleAudio(context, output, capacity = 10) {
   function clear() {
     for (const voice of [...voices]) voice.stop();
     burble = 0; held = 0; lastTransform = null; gear = 0; lastThump = 0;
-    for (const g of [engineGain, propGain, thrumGain, rainGain, snowGain, windGain, roadGain, dirtGain, squealGain, jetGain, lapGain, motorGain]) { g.gain.cancelScheduledValues(now()); g.gain.setValueAtTime(0, now()); }
+    for (const g of [engineGain, propGain, thrumGain, rainGain, snowGain, windGain, roadGain, dirtGain, squealGain, jetGain, lapGain, motorGain, whineGain, gasGain, gasRoar]) { g.gain.cancelScheduledValues(now()); g.gain.setValueAtTime(0, now()); }
   }
   return { update, ...effects, clear, echo, get played() { return played; }, get playedBy() { return { ...playedBy }; }, get active() { return voices.size; }, get gear() { return gear; } };
 }

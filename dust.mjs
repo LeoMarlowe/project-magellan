@@ -23,6 +23,14 @@ export function createDust(scene, capacity = 240) {
   scene.add(points);
   const puffs = [];
   let carry = 0, next = 0;
+  function add(puff) {
+    if (puffs.length < capacity) puffs.push(puff); else puffs[next % capacity] = puff;
+    next++;
+  }
+  // A puff placed by another effect (the Roadster's thruster vapour).
+  function puff(x, y, z, vx, vy, vz, life, grow, color) {
+    add({ x, y, z, vx, vy, vz, age: 0, life, grow, r: color.r, g: color.g, b: color.b });
+  }
   // Each frame: car is the vehicle state; raising says whether its wheels
   // are on a dirt track and dry; color is the dust's colour; pixels the
   // screen height (so puffs keep their size at any resolution).
@@ -35,10 +43,8 @@ export function createDust(scene, capacity = 240) {
       while (carry >= 1) {
         carry--;
         const side = next % 2 ? 1 : -1, jitter = ((next * 7919) % 100) / 100 - .5;
-        const puff = { x: car.x - fx * 1.5 + rx * side * .85, y: car.y + .25, z: car.z - fz * 1.5 + rz * side * .85,
-          vx: car.vx * .25 + rx * side * 1.5 + jitter, vy: .8 + Math.abs(jitter) * 1.2, vz: car.vz * .25 + rz * side * 1.5 - jitter, age: 0, life: 1.4 + Math.abs(jitter), grow: .8 + speed * .012, r: color.r, g: color.g, b: color.b };
-        if (puffs.length < capacity) puffs.push(puff); else puffs[next % capacity] = puff;
-        next++;
+        add({ x: car.x - fx * 1.5 + rx * side * .85, y: car.y + .25, z: car.z - fz * 1.5 + rz * side * .85,
+          vx: car.vx * .25 + rx * side * 1.5 + jitter, vy: .8 + Math.abs(jitter) * 1.2, vz: car.vz * .25 + rz * side * 1.5 - jitter, age: 0, life: 1.4 + Math.abs(jitter), grow: .8 + speed * .012, r: color.r, g: color.g, b: color.b });
       }
     } else carry = 0;
     for (let i = 0; i < puffs.length; i++) {
@@ -55,5 +61,5 @@ export function createDust(scene, capacity = 240) {
     geometry.setDrawRange(0, puffs.length);
     for (const name of ['position', 'size', 'alpha', 'tint']) geometry.attributes[name].needsUpdate = true;
   }
-  return { update, setLight: color => material.uniforms.uLight.value.copy(color), clear() { puffs.length = 0; carry = 0; geometry.setDrawRange(0, 0); }, get count() { return puffs.filter(p => p.age < p.life).length; } };
+  return { update, puff, setLight: color => material.uniforms.uLight.value.copy(color), clear() { puffs.length = 0; carry = 0; geometry.setDrawRange(0, 0); }, get count() { return puffs.filter(p => p.age < p.life).length; } };
 }

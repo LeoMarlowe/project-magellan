@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { featurePoint, hash } from './world.mjs?v=classes-2';
+import { featurePoint, hash } from './world.mjs?v=roadster-1';
 
 // Three.js BufferGeometry.clone() shares userData with its source. Detach it
 // before marking ownership, or the shared template becomes disposable too.
@@ -95,7 +95,7 @@ export function buildLandmark(feature, world) {
       for (const z of [-2.1, 0, 2.1]) box(.14, 1.2, .14, side * 2.1, foundation + 7.95, z);
     }
     for (const x of [-1.65, 1.65]) for (const z of [-1.65, 1.65]) box(.14, 3, .14, x, foundation + 8.85, z, 'dark');
-    for (const side of [-1, 1]) box(2.8, .15, 5.0, side * 1.17, foundation + 10.65, 0, 'orange', 0, 0, side * .3);
+    for (const side of [-1, 1]) box(2.8, .15, 5.0, side * 1.17, foundation + 10.65, 0, 'orange', 0, 0, -side * .3);
     for (const x of [-.5, .5]) box(.11, 8.4, .11, x, foundation + 3.8, -2, 'dark');
     for (let y = .2; y < 7.5; y += .45) box(1.05, .08, .12, 0, foundation + y, -2, 'cream');
     flag(4, 2, 6.2);
@@ -103,7 +103,12 @@ export function buildLandmark(feature, world) {
     const foundation = Math.max(ground(-3, -2), ground(3, -2), ground(-3, 2), ground(3, 2)) + .35;
     box(6.3, .35, 4.7, 0, foundation, 0, 'dark');
     box(5.8, 2.9, 4.2, 0, foundation + 1.55, 0, 'timber');
-    for (const side of [-1, 1]) box(3.6, .18, 5.3, side * 1.5, foundation + 3.75, 0, 'green', 0, 0, side * .32);
+    // A pitched roof, and under each side a timber slab filling the gable
+    // between the wall top and the ridge.
+    for (const side of [-1, 1]) {
+      box(3.6, .18, 5.3, side * 1.5, foundation + 3.75, 0, 'green', 0, 0, -side * .32);
+      box(3.2, 1.2, 4.2, side * 1.09, foundation + 3.14, 0, 'timber', 0, 0, -side * .32);
+    }
     box(1.05, 2.05, .1, .9, foundation + 1.2, -2.15, 'dark');
     box(1.5, 1, .11, -1.4, foundation + 1.95, -2.16, 'cream');
     box(1.27, .78, .12, -1.4, foundation + 1.95, -2.17, 'glass');

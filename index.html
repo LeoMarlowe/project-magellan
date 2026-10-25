@@ -14,7 +14,7 @@
   <meta name="description" content="Take the long way. An endless driving escape through a new procedural wilderness on every visit.">
   <title>Endless Drive — Take the long way</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23253d39'/%3E%3Cpath d='m10 29 8-19h4l8 19M14 23h12' fill='none' stroke='%23f3dfba' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=layout-7">
+  <link rel="stylesheet" href="style.css?v=roadster-1">
   <script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>
 </head>
 <body>
@@ -22,7 +22,7 @@
   <div class="vignette" aria-hidden="true"></div>
   <header>
     <a class="brand" href="#" aria-label="Open pause menu"><svg viewBox="0 0 38 38" aria-hidden="true"><path d="m5 29 11-22h6l11 22M11 23h16M19 7v8m0 6v8"/></svg><span>ENDLESS <b>DRIVE</b><small>THE GREAT OUT THERE</small></span></a>
-    <div class="top-actions"><button id="soundBtn" class="icon-button" aria-label="Unmute sound" title="Sound · M"></button><button id="pauseBtn" class="icon-button" aria-label="Pause game" title="Pause · Esc" hidden><svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg></button></div>
+    <div class="top-actions"><button id="soundBtn" class="icon-button" aria-label="Unmute sound" title="Sound · M"></button><button id="switchBtn" class="icon-button" aria-label="Switch vehicle" title="Switch vehicle · V" hidden><svg viewBox="0 0 24 24"><path d="M4 8h14m-3-3 3 3-3 3M20 16H6m3-3-3 3 3 3"/></svg></button><button id="pauseBtn" class="icon-button" aria-label="Pause game" title="Pause · Esc" hidden><svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg></button></div>
   </header>
   <div id="compass" class="in-game"><span id="headingTxt">N</span><i></i><span id="biomeTxt">OPEN MEADOW</span></div>
   <div id="rampHint" class="in-game">↑ RAMP AHEAD</div>
@@ -31,35 +31,42 @@
     <section class="intro">
       <div class="eyebrow"><span></span> A LITTLE FURTHER, EVERY TIME</div>
       <h1 id="menuTitle">Take the<br><em>long way.</em></h1>
-      <p id="menuCopy">Orange ramps launch. Purple ramps roll.<br>Find a lake. Your car becomes a boat.<br>Press F (or FLY) and it takes to the sky.</p>
+      <p id="menuCopy">Orange ramps launch. Purple ramps roll.<br><span id="menuVehicleCopy">Find a lake. Your car becomes a boat.<br>Press F (or FLY) and it takes to the sky.</span></p>
       <button id="startBtn" class="primary" disabled><span>Preparing your world</span><span aria-hidden="true">↗</span></button>
       <div id="menuStats" hidden><span><b id="runDistance">0.00</b> km this drive</span><span><b id="bestDistance">0.00</b> km personal best</span></div>
       <div id="pauseTools" hidden><button id="recoverBtn">↻ Recover car</button><button id="cameraBtn">Camera: Chase</button></div>
-      <div id="settingsRow"><button id="qualityBtn" title="Graphics quality">Graphics: Auto</button><button id="perfBtn" title="Show frame rate and frame times" aria-pressed="false">FPS meter: Off</button><button id="blurBtn" title="Blur fast motion, so speed looks smooth instead of choppy" aria-pressed="true">Motion blur: On</button><button id="timeBtn" title="Jump to sunrise, noon, sunset or night (keys 1–4)">Time of day</button><button id="tiltBtn" class="touch-only" title="Tilt steering: steer by turning the phone" aria-label="Tilt steering" aria-pressed="false">Tilt: Off</button><label class="touch-only">Sensitivity <input id="sensitivity" type="range" min="50" max="150" step="10" value="100" aria-label="Steering slider sensitivity"><output id="sensitivityValue">100%</output></label></div>
+      <div id="settingsRow"><button id="vehicleBtn" title="Your vehicle: the ATLAS 4×4, which sails and flies, or the Roadster, with cold-gas thrusters">Vehicle: ATLAS</button><button id="qualityBtn" title="Graphics quality">Graphics: Auto</button><button id="perfBtn" title="Show frame rate and frame times" aria-pressed="false">FPS meter: Off</button><button id="blurBtn" title="Blur fast motion, so speed looks smooth instead of choppy" aria-pressed="true">Motion blur: On</button><button id="timeBtn" title="Jump to sunrise, noon, sunset or night (keys 1–4)">Time of day</button><button id="tiltBtn" class="touch-only" title="Tilt steering: steer by turning the phone" aria-label="Tilt steering" aria-pressed="false">Tilt: Off</button><label class="touch-only">Sensitivity <input id="sensitivity" type="range" min="50" max="150" step="10" value="100" aria-label="Steering slider sensitivity"><output id="sensitivityValue">100%</output></label></div>
       <p id="touchGuide" class="touch-only">Slide the left control to steer; Jump and Drift sit just above it. ↑ accelerates, ↓ brakes or reverses, and FLY is beside them. In the air the slider becomes a ring: drag up to climb, down to dive, sideways to roll.</p>
       <div class="world-row"><span>WORLD <b id="seedTxt">—</b></span><button id="newWorld" title="Generate a new world · N">↻ New world</button><button id="copySeed" aria-label="Copy world link" title="Copy world link"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2"/></svg></button></div>
       <div id="loadError" hidden role="alert">The game couldn’t load. Check your connection and <button onclick="location.reload()">try again</button>.</div>
     </section>
     <div class="edition"><span>FREE ROAM / 002</span><span>Bigger jumps. Wilder terrain.<br>A new adventure in every direction.</span></div>
-    <div class="menu-controls"><span><kbd>W A S D</kbd> DRIVE</span><span><kbd>SPACE</kbd> JUMP</span><span><kbd>SHIFT</kbd> DRIFT</span><span><kbd>F</kbd> FLY</span><span><kbd>C</kbd> CAMERA</span></div>
+    <div class="menu-controls"><span><kbd>W A S D</kbd> DRIVE</span><span><kbd>SPACE</kbd> JUMP</span><span><kbd>SHIFT</kbd> DRIFT</span><span id="menuFly"><kbd>F</kbd> FLY</span><span class="roadster-only"><kbd>E</kbd> BOOST</span><span class="roadster-only"><kbd>G</kbd> FANS</span><span><kbd>C</kbd> CAMERA</span><span><kbd>V</kbd> SWITCH CAR</span></div>
   </main>
   <section id="mapPanel" class="in-game" aria-label="Navigation">
     <div class="map-heading"><span>EXPLORE FREELY</span><span id="mapNorth">N ↑</span></div>
     <canvas id="minimap" width="288" height="240" aria-label="Nearby roads and terrain"></canvas>
     <div class="map-footer"><span id="coordinates">0 E · 0 N</span><span id="elevation">12 M</span></div>
   </section>
-  <div id="driveHint" class="in-game"><span><kbd id="modeKey">SPACE</kbd> <span id="modeAction">jump</span></span><span><kbd>SHIFT</kbd> <span id="brakeAction">drift</span></span><span><kbd>F</kbd> <span id="flyAction">fly</span></span><span><kbd>R</kbd> recover</span><span><kbd>1–4</kbd> time</span></div>
+  <div id="driveHint" class="in-game"><span><kbd id="modeKey">SPACE</kbd> <span id="modeAction">jump</span></span><span><kbd>SHIFT</kbd> <span id="brakeAction">drift</span></span><span><kbd>F</kbd> <span id="flyAction">fly</span></span><span class="roadster-only"><kbd>E</kbd> boost</span><span class="roadster-only"><kbd>G</kbd> <span id="fanAction">fans off</span></span><span><kbd>R</kbd> recover</span><span><kbd>V</kbd> car</span><span><kbd>1–4</kbd> time</span></div>
   <div id="flightHint" class="in-game"><span class="full-only"><kbd>W S</kbd> throttle</span><span class="full-only"><kbd>↑ ↓</kbd> pitch</span><span class="full-only"><kbd>A D</kbd> roll</span><span class="full-only"><kbd>Q E</kbd> yaw</span><span class="full-only"><kbd>T</kbd> simple</span><span class="simple-only"><kbd>W S</kbd> throttle</span><span class="simple-only"><kbd>SPACE SHIFT</kbd> climb / dive</span><span class="simple-only"><kbd>A D</kbd> turn</span><span class="simple-only"><kbd>T</kbd> full controls</span><span><kbd>F</kbd> land</span><span><kbd>1–4</kbd> time</span></div>
   <section id="dashboard" class="in-game" aria-label="Driving instruments">
     <div id="surfaceState">ON THE ROAD</div>
     <div class="speed-row"><span id="gear">N</span><strong id="speed">0</strong><span class="unit">KM/H</span></div>
     <div class="speed-track"><i id="speedBar"></i></div>
+    <div id="gasRow" class="gas-row roadster-only" aria-label="Thruster gas"><span>THRUSTER</span><div class="gas-track"><i id="gasBar"></i></div><b id="gasPsi">10,000 PSI</b></div>
     <div class="trip"><span>TRIP <b id="distance">0.00</b> KM</span><span id="airtime">READY TO ROAM</span></div>
+  </section>
+  <!-- The Roadster's telemetry: pedals, g-meter, aero and thruster states. -->
+  <section id="telemetry" class="in-game roadster-only" aria-label="Roadster telemetry">
+    <div class="tm-pedals"><div><span>BRAKE</span><b id="tmBrake">0%</b><i><u id="tmBrakeBar"></u></i></div><div><span>ACCEL</span><b id="tmAccel">0%</b><i><u id="tmAccelBar"></u></i></div></div>
+    <div class="tm-g"><svg viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="36"/><circle cx="40" cy="40" r="24"/><circle cx="40" cy="40" r="12"/><path d="M40 2v76M2 40h76"/><circle id="tmDot" cx="40" cy="40" r="3.5"/></svg><span>G <b id="tmG">0.0</b></span></div>
+    <dl class="tm-dynamics"><dt>REAR WING</dt><dd id="tmWing">HIGH DOWNFORCE</dd><dt>FAN</dt><dd id="tmFan">MAX GRIP</dd><dt>THRUSTERS</dt><dd id="tmThrust">BOOST READY</dd></dl>
   </section>
   <div id="toast" role="status" aria-live="polite"></div>
   <div id="rotateNotice" role="alert"><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="16" y="6" width="16" height="30" rx="3"/><path d="M22 31h4M10 40a16 16 0 0 0 28 0m0 0-4 1m4-1 1 4"/></svg><strong>Turn your phone sideways</strong><span>Endless Drive plays in landscape.</span></div>
-  <div id="touch" aria-label="Touch driving controls"><div class="touch-left"><div class="touch-actions"><button data-control="jump" aria-label="Jump">JUMP</button><button data-control="brake" aria-label="Drift">DRIFT</button></div><div class="touch-steer"><div id="steerSlider" class="steer-slider" role="slider" aria-label="Steering: slide left or right" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><b aria-hidden="true">←</b><i></i><b aria-hidden="true">→</b></div><div id="flightRing" class="flight-ring" role="slider" aria-label="Flight control: drag up to climb, down to dive, left or right to roll" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><b aria-hidden="true">▲</b><b aria-hidden="true">▼</b><i></i></div><button id="simpleBtn" class="simple-button" aria-label="Simple flight controls" aria-pressed="false">SIMPLE</button></div></div><div class="touch-right"><div class="touch-flight"><button id="flyBtn" class="fly-button" aria-label="Fly">FLY</button></div><button data-control="down" aria-label="Brake or reverse">↓</button><button data-control="up" aria-label="Accelerate">↑</button></div></div>
-  <script type="module" src="game.mjs?v=blur-3"></script>
+  <div id="touch" aria-label="Touch driving controls"><div class="touch-left"><div class="touch-actions"><button data-control="jump" aria-label="Jump">JUMP</button><button data-control="brake" aria-label="Drift">DRIFT</button></div><div class="touch-steer"><div id="steerSlider" class="steer-slider" role="slider" aria-label="Steering: slide left or right" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><b aria-hidden="true">←</b><i></i><b aria-hidden="true">→</b></div><div id="flightRing" class="flight-ring" role="slider" aria-label="Flight control: drag up to climb, down to dive, left or right to roll" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0"><b aria-hidden="true">▲</b><b aria-hidden="true">▼</b><i></i></div><button id="simpleBtn" class="simple-button" aria-label="Simple flight controls" aria-pressed="false">SIMPLE</button></div></div><div class="touch-right"><div class="touch-flight"><button id="fanBtn" class="fly-button fan-button roadster-only" aria-label="Suction fans" aria-pressed="true">FANS</button><button data-control="boost" class="fly-button boost-button roadster-only" aria-label="Boost">BOOST</button><button id="flyBtn" class="fly-button" aria-label="Fly">FLY</button></div><button data-control="down" aria-label="Brake or reverse">↓</button><button data-control="up" aria-label="Accelerate">↑</button></div></div>
+  <script type="module" src="game.mjs?v=roof-1"></script>
   <script>window.addEventListener('error',()=>{if(document.querySelector('#startBtn').disabled)document.querySelector('#loadError').hidden=false;});</script>
 </body>
 </html>

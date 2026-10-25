@@ -1,0 +1,202 @@
+{
+  "name": "Roadster Rocket",
+  "source": "roadster-rocket.blend",
+  "asset": "roadster-rocket.glb",
+  "sourceParts": 193,
+  "triangles": 20876,
+  "batching": [
+    {
+      "group": "Body",
+      "before": 126,
+      "after": 9
+    },
+    {
+      "group": "Spinner_FL",
+      "before": 14,
+      "after": 3
+    },
+    {
+      "group": "Spinner_RL",
+      "before": 14,
+      "after": 3
+    },
+    {
+      "group": "Spinner_FR",
+      "before": 14,
+      "after": 3
+    },
+    {
+      "group": "Spinner_RR",
+      "before": 14,
+      "after": 3
+    },
+    {
+      "group": "Rear_Wing",
+      "before": 7,
+      "after": 3
+    }
+  ],
+  "wheelRadius": {
+    "front": 0.343,
+    "rear": 0.367
+  },
+  "tyres": {
+    "front": "295/30 R20",
+    "rear": "335/30 R21"
+  },
+  "wheelbase": 2.82,
+  "track": {
+    "front": 1.69,
+    "rear": 1.66
+  },
+  "length": 4.37,
+  "width": 2.0,
+  "height": 1.1,
+  "thrusters": [
+    {
+      "name": "Exhaust_Lift_FL",
+      "position": [
+        -0.78,
+        0.085,
+        1.92
+      ],
+      "thrust": [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Exhaust_Lift_FR",
+      "position": [
+        0.78,
+        0.085,
+        1.92
+      ],
+      "thrust": [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Exhaust_Lift_RL",
+      "position": [
+        -0.8,
+        0.085,
+        -1.92
+      ],
+      "thrust": [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Exhaust_Lift_RR",
+      "position": [
+        0.8,
+        0.085,
+        -1.92
+      ],
+      "thrust": [
+        0.0,
+        -1.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Exhaust_Rear_1",
+      "position": [
+        -0.6,
+        0.37,
+        -2.25
+      ],
+      "thrust": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "name": "Exhaust_Rear_2",
+      "position": [
+        -0.2,
+        0.37,
+        -2.25
+      ],
+      "thrust": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "name": "Exhaust_Rear_3",
+      "position": [
+        0.2,
+        0.37,
+        -2.25
+      ],
+      "thrust": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "name": "Exhaust_Rear_4",
+      "position": [
+        0.6,
+        0.37,
+        -2.25
+      ],
+      "thrust": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    {
+      "name": "Exhaust_Yaw_L",
+      "position": [
+        -1.005,
+        0.44,
+        0.92
+      ],
+      "thrust": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Exhaust_Yaw_R",
+      "position": [
+        1.005,
+        0.44,
+        0.92
+      ],
+      "thrust": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "axes": "X right, Y up, Z forward (glTF)",
+  "materials": [
+    "Ano_White",
+    "Brake_Lamp",
+    "Caliper_Gold",
+    "Carbon",
+    "Gold_Glass",
+    "Headlamp",
+    "Lens_White",
+    "Rubber",
+    "Thruster_Throat",
+    "Titanium",
+    "Tow_Red",
+    "Wheel_Graphite"
+  ]
+}

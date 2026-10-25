@@ -1,4 +1,4 @@
-import { createWorld, CHUNK, GRID } from './world.mjs?v=classes-2';
+import { createWorld, CHUNK, GRID } from './world.mjs?v=roadster-1';
 import { createTerrain, ULTRA_GRID } from './terrain.mjs?v=classes-3';
 import { buildGrass } from './grass-data.mjs?v=terrain-1';
 import { buildWaterData, buildDistantWater, buildRiverWater } from './water-data.mjs?v=rivers-1';

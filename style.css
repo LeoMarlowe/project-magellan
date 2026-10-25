@@ -1118,3 +1118,80 @@ body.upright #rotateNotice {
   #rotateNotice svg rect { transform-origin:24px 21px; animation:rotate-hint 2.4s ease-in-out infinite; }
 }
 @keyframes rotate-hint { 0%,25% { transform:rotate(0); } 50%,75% { transform:rotate(-90deg); } 100% { transform:rotate(0); } }
+
+/* The Roadster: a thruster gas gauge under the speed, BOOST beside HOVER on
+   touch, and its E key in the hints. All hidden while driving the ATLAS. */
+body:not(.roadster) .roadster-only { display:none!important; }
+.gas-row {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:-8px 0 14px;
+  font-size:8px;
+  letter-spacing:.15em;
+  color:var(--faint);
+}
+.gas-track { flex:1; height:3px; background:var(--line); }
+.gas-track i { display:block; height:100%; width:100%; background:#bfe2ec; transition:width .1s; }
+.gas-row.low span { color:var(--yellow); }
+.gas-row.low .gas-track i { background:var(--yellow); }
+#touch .touch-flight .boost-button { color:#bfe2ec; border-color:rgba(191,226,236,.45); }
+#touch .touch-flight .fly-button.active { color:var(--ink); } /* HOVER and BOOST are held */
+#touch .touch-flight .fan-button[aria-pressed="false"] { color:var(--faint); border-style:dashed; } /* fans off */
+body.roadster #touch .touch-flight { flex-direction:row; align-items:flex-end; } /* side by side, clear of the speed */
+
+/* The Roadster's HUD: red telemetry on black glass, after its own track
+   interface. The in-game panels take red lines and accents; the minimap is
+   tinted red; a telemetry panel sits above the speed. The menus keep their
+   colours. */
+body.roadster .in-game, body.roadster #touch, body.roadster header {
+  --yellow:#ff3b2f;
+  --line:rgba(255,59,47,.38);
+  --faint:rgba(236,226,224,.62);
+  --cream:#f1e9e7;
+  --ink:#140606;
+}
+body.roadster #mapPanel, body.roadster #driveHint kbd, body.roadster #telemetry, body.roadster #rampHint, body.roadster #lakeHint {
+  background:rgba(10,5,5,.62);
+  border-color:rgba(255,59,47,.38);
+}
+body.roadster #rampHint, body.roadster #lakeHint { color:#ff6a5f; }
+body.roadster .map-heading, body.roadster .map-footer { border-color:rgba(255,59,47,.2); }
+body.roadster #minimap { filter:grayscale(1) contrast(1.7) brightness(.5) sepia(1) saturate(6) hue-rotate(-38deg); }
+body.roadster .speed-row strong { text-shadow:0 0 22px rgba(255,40,30,.45); }
+body.roadster .speed-track { height:3px; box-shadow:0 0 10px rgba(255,59,47,.35); }
+body.roadster .gas-track i { background:var(--yellow); box-shadow:0 0 8px rgba(255,59,47,.6); }
+body.roadster .gas-row b { font-weight:500; color:var(--cream); font-variant-numeric:tabular-nums; }
+body.roadster.touch #touch button { background:rgba(10,5,5,.55); }
+body.roadster.touch #touch button.active { background:var(--yellow); }
+body.roadster #toast { background:rgba(14,6,6,.86); border-color:rgba(255,59,47,.38); color:#f1e9e7; }
+#telemetry {
+  position:fixed;
+  right:max(40px,env(safe-area-inset-right));
+  bottom:calc(max(35px,env(safe-area-inset-bottom)) + 176px);
+  width:264px;
+  z-index:4;
+  display:grid;
+  grid-template-columns:1fr 78px;
+  gap:10px 12px;
+  padding:10px 12px;
+  border:1px solid;
+  border-radius:3px;
+  font-size:8px;
+  letter-spacing:.14em;
+  color:var(--faint);
+}
+.tm-pedals { display:flex; flex-direction:column; gap:9px; }
+.tm-pedals div { display:grid; grid-template-columns:1fr auto; gap:4px 0; }
+.tm-pedals b { font-weight:500; color:var(--cream); font-variant-numeric:tabular-nums; }
+.tm-pedals i { grid-column:1 / -1; height:2px; background:rgba(255,59,47,.18); }
+.tm-pedals u { display:block; height:100%; width:0; background:var(--yellow); transition:width .1s; }
+.tm-g { grid-row:span 2; display:flex; flex-direction:column; align-items:center; gap:4px; }
+.tm-g svg { width:78px; height:78px; fill:none; stroke:rgba(255,59,47,.35); stroke-width:.8; }
+.tm-g #tmDot { fill:var(--yellow); stroke:none; filter:drop-shadow(0 0 3px #ff3b2f); }
+.tm-g b { font-weight:500; color:var(--cream); font-variant-numeric:tabular-nums; }
+.tm-dynamics { display:grid; grid-template-columns:auto 1fr; gap:5px 8px; margin:0; }
+.tm-dynamics dd { margin:0; text-align:right; color:var(--yellow); white-space:nowrap; }
+/* Room only on larger screens; phones keep the view clear. */
+@media(max-height:560px), (max-width:900px) { #telemetry { display:none!important; } }
+body.touch #telemetry { display:none!important; }

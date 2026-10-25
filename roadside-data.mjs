@@ -7,7 +7,7 @@
 // in world space, except the signs: each is its own small piece (positions
 // from its foot), so a car can knock it over. Reflective faces are marked to
 // shine back in the headlights. Guardrails and signs are also obstacles.
-import { CHUNK } from './world.mjs?v=classes-2';
+import { CHUNK } from './world.mjs?v=roadster-1';
 
 const RAIL = [.42, .45, .47], STEEL = [.24, .25, .26], WHITE = [.78, .77, .72], BLACK = [.02, .02, .02], AMBER = [.92, .42, .04], RED = [.55, .02, .02];
 const YELLOW = [.86, .6, .03], BOARD = [.8, .8, .76];

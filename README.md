@@ -2,7 +2,7 @@
 
 **Play it: [project-magellan.pages.dev](https://project-magellan.pages.dev/)**
 
-An endless, procedurally generated world to drive, sail and fly through: meadows, pine country, deserts, snowy ridges, lakes, rivers and inland seas, with jump ramps, barrel-roll ramps, camps and lookout towers along the way. Your vehicle, the ATLAS, is an off-road 4×4 that turns into a boat in deep water and unfolds into a plane on demand.
+An endless, procedurally generated world to drive, sail and fly through: meadows, pine country, deserts, snowy ridges, lakes, rivers and inland seas, with jump ramps, barrel-roll ramps, camps and lookout towers along the way. Your vehicle, the ATLAS, is an off-road 4×4 that turns into a boat in deep water and unfolds into a plane on demand. Or take the Roadster, a low supercar with cold-gas thrusters that boosts, hovers and skims across lakes.
 
 Every visit generates a new world. Add `?seed=123456` to a link to share or revisit the same one.
 
@@ -12,6 +12,13 @@ Every visit generates a new world. Add `?seed=123456` to a link to share or revi
   <tr>
     <td width="50%"><img src="docs/screenshots/boat.jpg" alt="The ATLAS as a boat, leaving a V-shaped wake across a lake toward a sandy shore"><br><sub><b>Boat mode.</b> Drive into deep water and the car becomes a boat.</sub></td>
     <td width="50%"><img src="docs/screenshots/flying.jpg" alt="The ATLAS flying as a plane high above pine-dotted meadows and a winding road"><br><sub><b>Flying.</b> Unfold the wings anywhere and take off.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/roadster-boost.jpg" alt="The white Roadster launching down a highway past an orange ramp, cold gas streaming from its rear thrusters"><br><sub><b>The Roadster.</b> A second car: its rear thrusters boost it to 97 km/h in 0.6 s.</sub></td>
+    <td><img src="docs/screenshots/roadster-hover.jpg" alt="The Roadster hovering above a turquoise lake on jets of cold gas, turning toward the sandy shore"><br><sub><b>Hovering.</b> Hold F to hover; over water it skims on its jets.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/roadster-hud.jpg" alt="The Roadster cornering on a highway with its red-on-black HUD: pedal bars, a g-meter, wing, fan and thruster states, a thruster pressure gauge and a red-tinted map"><br><sub><b>Roadster HUD.</b> Red telemetry on black glass: pedals, a g-meter, the wing, fans and thrusters, and thruster pressure. Press V to swap cars mid-drive.</sub></td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/sea.jpg" alt="Flying over sand dunes toward a turquoise inland sea ringed by mountains"><br><sub><b>Inland seas.</b> Lakes and seas stretch to the horizon from the air.</sub></td>
@@ -68,16 +75,19 @@ You need a browser with WebGL and module workers. Everything else is bundled: Th
 | A D / ← → | Steer |
 | Space | Jump (stopped or moving) |
 | Shift | Handbrake / drift |
-| F | Unfold the wings to fly; press again to fold them and land |
+| F | Unfold the wings to fly; press again to fold them and land. Roadster: hold to hover on the thrusters |
+| E | Roadster: boost on the rear thrusters (hold) |
+| G | Roadster: suction fans on / off |
 | R | Recover onto nearby clear ground |
 | C | Camera: chase, wide or bonnet |
+| V | Switch between the ATLAS and the Roadster where you are (also the ⇄ button at the top right) |
 | L | Headlights |
 | M | Sound on / off |
 | Esc / P | Pause / resume |
 | N | New world |
 | 1 / 2 / 3 / 4 | Jump to sunrise, noon, sunset or night (also **Time of day** in the menu) |
 
-In the water the same keys drive the boat: W/S thrust, A/D steer, Shift slows down. You can't jump while floating.
+In the water the same keys drive the boat: W/S thrust, A/D steer, Shift slows down. You can't jump while floating. The Roadster never floats: over water it skims on its thrusters and drives as it does on land.
 
 ### Flying
 
@@ -98,7 +108,7 @@ On phones and compact windows:
 
 - **Steering slider** (lower left): slide to steer. The track stays put, and the knob stops at either end however far your finger travels.
 - **↑ / ↓**: accelerate, and brake then reverse.
-- **Jump** and **Drift** sit side by side just above the slider. **FLY** is just left of the brake; in the air it becomes **LAND**, with **SIMPLE** above it.
+- **Jump** and **Drift** sit side by side just above the slider. **FLY** is just left of the brake; in the air it becomes **LAND**, with **SIMPLE** above it. In the Roadster it's **HOVER** (hold it), with **BOOST** and **FANS** (suction on / off) beside it.
 - **Flight ring:** in the air the steering slider becomes a ring in the same spot. Drag the knob up to climb, down to dive, and sideways to roll (or turn, on simple controls). The ring stays put, the knob stops at its edge and re-centres when you let go, and ↑ / ↓ are the throttle.
 - **Tilt steering** (menu → **Tilt**, off by default): turn the phone like a steering wheel to steer; full lock is about 35° of turn. The slider steps aside, and Jump and Drift stay put. In the air, turning rolls (or turns, on simple controls), and tilting the top toward you climbs and away dives, measured from how you held the phone when the wings came out. The ring still works and takes over while you touch it. iPhones ask once for motion access when you turn it on.
 - **No minimap** on phones, so the controls have room (the HUD still points to the nearest ramp and lake).
@@ -120,6 +130,18 @@ The game pauses when the window loses focus. Sound starts muted on your first vi
 **Water and the boat.** Small ponds sit on an 840 m grid, and inland seas 1–1.6 km across sit on a sparse 4 km grid (the first is about 1 km from spawn). Each sea is fed by one to three rivers, 2.5–6 km long, that wind up from its shore into the hills, widening from 5 m at the source to 26 m at the mouth; their ripples drift downstream, and most are deep enough to sail. Drive into water deeper than 0.9 m and the ATLAS becomes a boat over 2.4 seconds: the body splits onto planing hulls, the wheels fold away and water jets deploy. Drive back into water shallower than 0.4 m to return to wheels. The water has clear turquoise shallows, reflections of the real sky, sun glitter, shoreline foam, caustics on the lake bed, and boat wakes.
 
 **Flying.** Press F from the car, the boat, or mid-jump. Over 1.6 seconds the wings telescope out of the doors (7.5 m span), tail booms extend and a propeller pushes out through the grille. On the ground or water the plane taxis and lifts off at about 115 km/h. A jump with the wings half out turns into a glide. It's a real physics model: lift, drag, stalls, a ceiling near 650 m, and a top speed of about 340 km/h. Touch down below flying speed and you land as the car (or as the boat on deep water). Wingtips that touch the ground end the flight, and the wings smash trees and rocks they hit. See [Flight model](#flight-model) for the details.
+
+**The Roadster.** Settings → **Vehicle** swaps the ATLAS for a second car where you are. It's an original low-poly study of the Rocket trim of Tesla's 2026 Roadster, with no badges, built to its published size: a 2.825 m wheelbase, 2 m wide and 1.1 m tall. Its handling comes from the published figures:
+
+| | Claimed | In the game |
+| --- | --- | --- |
+| 0–60 mph on the tyres | under 1.6 s (Performance trim) | 1.59 s, then power-limited above about 125 km/h (1 MW, 1,700 kg) |
+| 0–60 mph with the thrusters | under 0.59 s (Rocket trim) | 0.59 s, holding **E** |
+| Top speed | over 230 mph (370 km/h) | 370 km/h on tarmac, about 250 on dirt and 160 on grass; boosting, up to 400 km/h (the 2017 claim of 250 mph) |
+| Thrusters | 10 cold-gas nozzles: 4 at the rear, 4 at the corners, 2 on the flanks | The same layout: rear nozzles boost, corner nozzles lift, flank nozzles turn it in the air |
+| Gas | 600 L at about 690 bar, 5–6 s of thrust | 5.5 s per group of nozzles; refills in 25 s of driving (a real fill takes hours) |
+
+Its suction fans pull air from under the car on land: it climbs faces up to about 65° (the ATLAS slides back from 48°; past about 72° is a wall), corners about 70% harder, and keeps its wheels down over crests that throw the ATLAS into the air (ramps still launch it). Press **G** to switch the fans off (they start on): it then grips like any car, can't climb past about 45°, and flies off crests in big jumps. Brake or drift at speed and the rear wing swings up about 55° into an air brake, tripling its drag. Hold **F** to lift off: the corner jets climb to a 5 m hover and hold it, slow a fall from a big jump, and the flank jets turn the car on the spot. Deep water doesn't turn it into a boat: the jets hold it 0.4 m above the surface at no cost in gas, and it skims across like a hovercraft at up to about 160 km/h, leaving a wake. Each firing nozzle shows a plume of cold gas, raising vapour from the ground or water beneath. Its HUD turns red on black, with a thruster pressure gauge (10,000 psi full) under the speed and a telemetry panel above it: brake and accelerator, a g-meter, and what the wing, fans and thrusters are doing. The chase camera sits closer and lower than the ATLAS's, and stays close at speed. `?vehicle=roadster` opens a link in it.
 
 **Day and night.** The sun rises, crosses the sky and sets: a day lasts 12 minutes and a night 4. Sunrise and sunset light the sky gold and pink, shadows stretch, and clouds glow from the sun's side. At night the moon and stars come out, the world is lit dim blue, and the headlights come on by themselves (press L to take over). The HUD shows the time next to the region. Each world starts at its own time of day or night, chosen from its seed (night about a quarter of the time, as often as you'd meet it while playing), so a shared seed link starts at the same time too. `?time=18` starts at 18:00 instead. Press 1–4 to jump to sunrise, noon, sunset or night; the clock carries on from there.
 
@@ -165,6 +187,8 @@ Auto steps down after about 2 seconds of frames slower than 48 fps, or when more
 
 A graph plots the last 120 frames against the 60 and 30 fps lines. Browsers usually cap at your display's refresh rate, so a steady 60 fps with a low CPU figure means there's headroom.
 
+**Vehicle** switches between the ATLAS and the Roadster where you are (so does V, or the ⇄ button while driving); from the air it sets the new car down on clear ground nearby. Trip records carry over, and the choice is remembered.
+
 **Motion blur** (on by default) blurs what moves fast across the screen, the way a camera would, so posts, trees and road lines rushing past at speed read as motion instead of a row of separate copies. The car or plane stays sharp. It costs about 1 ms of GPU time a frame at High on a MacBook Air M2.
 
 ### Link options
@@ -176,6 +200,7 @@ A graph plots the last 120 frames against the 60 and 30 fps lines. Browsers usua
 | `?weather=rain\|snow\|clear` | Force the weather |
 | `?time=H` | Start at hour H (for example `18.5` for 18:30) |
 | `?blur=1\|0` | Turn motion blur on or off (test modes start with it off) |
+| `?vehicle=atlas\|roadster` | Start in the ATLAS or the Roadster |
 | `?test=water` / `boat` / `fly` / `sea` | Start by the lake, afloat, in the air, or approaching the first sea |
 | `?test=ramp` / `twist` / `smash` / `tree-smash` | Repeatable stunt and impact approaches |
 | `?test=drive` / `browser` | Test modes with a read-only diagnostics snapshot |
@@ -191,11 +216,11 @@ Test modes keep their trip records separate from normal play. The `seed=3` world
 | Page and UI | `index.html`, `style.css` (menus, HUD, touch controls) |
 | Main loop | `game.mjs`: rendering, streaming, vehicle animation, audio, input |
 | World | `world.mjs` (terrain, props, vehicle physics), `landforms.mjs` (plains, hills, mountain ranges, dunes, mesas), `noise.mjs`, `terrain.mjs` (terrain meshes and colours), `roads.mjs` (road network, junctions, roundabouts, lanes, bridges, road maps), `rivers.mjs`, `lakes.mjs`, `streaming-layout.mjs`, `world-worker.mjs` (background generation) |
-| Vehicle | `vehicle-model.mjs` (loads the glTF), `vehicle-presentation.mjs` (smooth motion between physics steps), `amphibious-motion.mjs` (boat), `flight-motion.mjs` (plane), `controls.mjs` (steering response) |
+| Vehicle | `vehicle-model.mjs` (loads the glTFs), `vehicle-presentation.mjs` (smooth motion between physics steps), `amphibious-motion.mjs` (boat), `flight-motion.mjs` (plane), `roadster-motion.mjs` (the Roadster's handling and thrusters), `controls.mjs` (steering response) |
 | Water | `water-data.mjs` (meshes, built in the worker), `water.mjs` (shader and wakes) |
 | Weather and sky | `daylight.mjs` (the clock, sun and moon paths, light colours), `sky.mjs` (sky dome, sun, moon, stars, clouds), `weather.mjs` (regional odds), `weather-effects.mjs` (rain, snow, fog colour), `clouds.mjs` (cloud banks) |
 | Scenery | `scenery.mjs` (ramps, cabins, lookouts), `bridge-data.mjs` (bridge meshes, built in the worker), `roadside-data.mjs` (guardrails, signs and posts, built in the worker), `nature-models.mjs`, `grass-data.mjs`, `grass.mjs` |
-| Effects | `tree-breakage.mjs`, `debris.mjs`, `dust.mjs`, `shadow-fade.mjs`, `camera-motion.mjs` |
+| Effects | `tree-breakage.mjs`, `debris.mjs`, `dust.mjs`, `thrusters.mjs` (the Roadster's plumes and vapour), `shadow-fade.mjs`, `camera-motion.mjs` |
 | Sound | `vehicle-audio.mjs`, `break-audio.mjs` |
 | Tools | `quality.mjs` (presets and Auto), `perf-meter.mjs`, `profiling.mjs` |
 | Assets | `assets/vehicles/`, `assets/nature/` (Blender sources and exports), `scripts/` (build, export and profiling scripts) |
@@ -216,6 +241,7 @@ The tests cover, among other things:
 - **Terrain and world:** terrain continuity, seeded regeneration, mountain ranges and snow, scenery clearances, cliffs, and slope limits.
 - **Driving:** jumps and ramp launches, top speed, drift and collisions.
 - **Boat and flight:** transformations, buoyancy, flight physics, take-offs and landings.
+- **Roadster:** the exported model and its thruster layout, launch times and top speeds against the published figures, the gas tank, hovering, and crossing lakes on the thrusters.
 - **Weather and grass:** weather odds, and grass placement and budgets.
 - **Rendering:** shadow-map fades, frame-rate independence, the exported vehicle and scenery models, and many simulated long drives.
 
@@ -259,10 +285,22 @@ All geometry is original to this project. Builds were verified with Blender 5.2;
 
 The rig uses X right, Y up and Z forward:
 
-- **Pivots:** `Body` takes the suspension. `Wheel_FL/FR/RL/RR` are the steering pivots, each with its own `Spinner_*` for rolling.
+- **Pivots:** `Body` takes the suspension. `Wheel_FL/FR/RL/RR` are the steering pivots, each with its own `Spinner_*` for rolling. (The Roadster also has `Rear_Wing`, which tilts about its X axis as the air brake.)
 - **Folding:** the `WheelFold_*` nodes fold the wheels away for the boat.
 - **Propeller:** `Propeller` is left unanimated so the game can spin it.
 - **Dimensions:** wheel radius 0.57 m, wheelbase 2.74 m, track 2.08 m.
+
+![Studio render of the Roadster from behind, showing its rear wing, full-width taillight and four rear thruster nozzles](assets/vehicles/roadster-preview.png)
+
+**The Roadster.** The game loads `assets/vehicles/roadster-rocket.glb`, which `scripts/build-roadster.py` builds from scratch: a faceted body lofted through fifteen cross-sections with the wheel arches cut out, a gold-glazed canopy, carbon aero, the Rocket trim's rear wing and ten titanium thruster nozzles (193 named parts). Exported, it is 29 meshes and about 21,000 triangles. Each nozzle mouth is an `Exhaust_*` empty whose `thrust` property is the gas direction; the game hangs its plumes there. Wheel pivots and spinners follow the ATLAS's rig; the front tyres are 0.343 m in radius and the rears 0.367 m (295/30 R20 and 335/30 R21), on a 2.82 m wheelbase. `roadster-rocket.json` lists the nozzles and dimensions.
+
+```sh
+# Rebuild the Roadster from scratch, with its preview, and export it
+/Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python scripts/build-roadster.py
+
+# Export manual edits without rebuilding
+/Applications/Blender.app/Contents/MacOS/Blender --background assets/vehicles/roadster-rocket.blend --python scripts/export_roadster.py
+```
 
 **The scenery.** `assets/nature/endless-nature.blend` holds eighteen models: five trees (alpine, windswept and snow-dusted pines, a stunted treeline pine and a dead snag), two cacti, two rock clusters, two boulders, three bushes (meadow, desert scrub and juniper), three rock outcrops (granite crag, sandstone ledge, tilted slab) and a scree field. Keep the named roots and the trees' six `fragment` sections (so they can break apart) when editing. Exact triangle counts are in `endless-nature.json`.
 
@@ -296,6 +334,7 @@ To update the bundled Three.js deliberately, run `npm run vendor` and commit the
 - **Slopes.** Climbing saps the engine: off-road the car still makes about 220 km/h up a 17° slope, 170 km/h up 27°, 115 km/h up 35°, 90 km/h up 40° and a crawl up 45°. Faces steeper than about 47° can't be climbed at all; the tyres lose their grip and the car slides back.
 - **Jumps.** Jumps use a real impulse with gravity, buffered input and a short grace period after leaving a crest. Holding Space doesn't bounce the car.
 - **Crests and ramps.** The ground can push the car up but never pull it down. When the surface falls away faster than gravity, the car follows its own ballistic path, so ramp fronts, backs and sides launch like sharp edges while ordinary road bumps never add up to a lift-off. Off the land's own crests taken slowly, the suspension soaks up half the climb, so a bank at a crawl is no jump; from about 100 km/h the car leaves with all of it. A face steeper than about 52° is a wall: the car stops against it (sliding along) instead of riding up it.
+- **The Roadster.** A traction-limited launch (17.1 m/s² of grip, less off the tarmac), then power-limited at 1 MW over 1,700 kg; aero drag (∝ v²) and surface drag (∝ v) set its top speed on each surface. The rear thrusters add 28.7 m/s² forward. The corner thrusters give up to 44 m/s² of lift (twice the game's gravity) through a controller that climbs or sinks at up to 8 m/s toward 5 m. Over water its support surface lies 0.35 m above the water, with little side grip. On land the suction fans cut the climbing power loss to a fifth and the slide back down a slope to 30%, move the stall to 67–75° and the wall to 72°, double the side grip, and cancel three quarters of the climb speed it would carry off a crest. The air brake triples the aero drag.
 - **Attitude in the air.** A car leaving slanted ground keeps its tilt, drifting slowly toward upright, and settles onto the surface when it lands.
 - **Smooth display.** The car is drawn between the two latest physics steps (at most one step of delay), and the camera integrates its motion over each frame, so follow distance doesn't change with your display's refresh rate.
 
@@ -363,12 +402,13 @@ All in a single pass:
 
 ### Shadows
 
-The sun casts from two maps:
+The sun casts from three maps:
 
 - **Sharp map.** A 96 m map sits ahead of the car along your view.
 - **Wide map.** A coarser 220 m map (Medium and High only) takes over toward its edge, so trees and rocks cast shadows from about 150 m away. It's a depth pass only, and the shader blends the two.
-- **Fading.** Both maps fade out gradually at their edges instead of cutting off.
-- **No crawl.** Both maps move only in whole texels, so shadow edges don't crawl as you drive.
+- **Vehicle map.** The car (or boat, or plane) casts only into a third map, 11 m across, that moves with it (Medium and High; on Low it stays in the sharp map). At about 1 cm a texel its shadow is crisp, and since it meets the same texels every frame it doesn't step or crawl as the car moves. Motion blur leaves the car's shadow sharp too, along with the car.
+- **Fading.** The sharp and wide maps fade out gradually at their edges instead of cutting off.
+- **No crawl.** Those two move only in whole texels, so scenery shadow edges don't crawl as you drive.
 
 ### Grass
 
@@ -384,6 +424,7 @@ The sun casts from two maps:
 All synthesized live:
 
 - **Engine.** A loop of uneven V8 exhaust pulses runs through a muffler response, with revs that follow six gears.
+- **Roadster.** An electric drive's whine replaces the V8, rising with road speed, with the hiss and roar of cold gas whenever the thrusters fire.
 - **Transforming.** As the ATLAS transforms, the sound crossfades to a muffled boat engine with a water jet, or to a plane engine with a propeller whoosh.
 - **Ambience.** Wind, tyre and weather sounds follow speed, surface and the weather.
 - **One-shots.** Impacts, splashes, scrapes and strikes are panned from the camera, with a short echo. Big hits briefly duck the engine.
